@@ -5,7 +5,7 @@ from collections import Counter
 from nltk.tokenize import TweetTokenizer
 
 
-class Vocab:
+class Vocab():
 
     def __init__(self, file, min_occ):
 
@@ -19,6 +19,8 @@ class Vocab:
                     self.w2i[w] = len(self.w2i)
                     self.i2w[self.w2i[w]] = w
                     self.w2c[w] = c
+
+        self.answers = ['<yes>', '<no>', '<n/a>']
 
     def __len__(self):
         return len(self.w2i)
@@ -39,7 +41,7 @@ class Vocab:
         return [self.i2w[xi] for xi in x]
 
     @classmethod
-    def create_vocab(cls, file, min_occ):
+    def create(cls, file, min_occ):
 
         special_tokens = ['<pad>', '<unk>', '<sos>', '<eos>', '<yes>', '<no>',
                           '<n/a>']
@@ -68,3 +70,64 @@ class Vocab:
                 writer.writerow([w, c])
 
         return cls(out_file, min_occ)
+
+
+class CategoryVocab():
+
+    def __init__(self, file):
+
+        self.c2i, self.i2c, self.c2count = dict(), dict(), dict()
+
+        with open(file, 'r') as csvfile:
+            reader = csv.reader(csvfile, delimiter=',', quotechar='|')
+            for row in reader:
+                category, count = row[0], int(row[1])
+                self.c2i[category] = len(self.c2i)
+                self.i2c[self.c2i[category]] = category
+                self.c2count[category] = count
+
+    def __len__(self):
+        return len(self.c2i)
+
+    def __getitem__(self, q):
+
+        if isinstance(q, str):
+            return self.c2i[q]
+        elif isinstance(q, int):
+            return self.i2c[q]
+        else:
+            raise ValueError("Expected str or int but got {}".format(type(q)))
+
+    def encode(self, x):
+        return [self.c2i[xi] for xi in x]
+
+    def decode(self, x):
+        return [self.i2c[xi] for xi in x]
+
+    @classmethod
+    def create(cls, file):
+
+        special_tokens = ['<pad>']
+
+        c2count = Counter()
+
+        with gzip.open(file, 'r') as file:
+
+            for json_game in file:
+                game = json.loads(json_game.decode("utf-8"))
+
+                for oi, obj in enumerate(game['objects']):
+                    c2count.update([obj['category']])
+
+        out_file = '../data/categories.csv'
+        with open(out_file, 'w') as csvfile:
+            writer = csv.writer(csvfile, delimiter=',', quotechar='|',
+                                quoting=csv.QUOTE_MINIMAL)
+
+            for st in special_tokens:
+                writer.writerow([st, 9999])
+
+            for w, c in c2count.items():
+                writer.writerow([w, c])
+
+        return cls(out_file)

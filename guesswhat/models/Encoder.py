@@ -18,8 +18,8 @@ class Encoder(nn.Module):
     def forward(self, input, lengths):
 
         if input.size(0) != lengths.size(0):
-            raise AssertionError("Expected first dimension of input and lenghts \
-                                  to be the same. But got {} and {}."
+            raise AssertionError("Expected first dimension of input and " +
+                                 "lengths to be the same. But got {} and {}."
                                  .format(input.size(0), lengths.size(0)))
 
         # pack sequence

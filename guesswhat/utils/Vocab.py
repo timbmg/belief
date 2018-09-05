@@ -20,7 +20,11 @@ class Vocab():
                     self.i2w[self.w2i[w]] = w
                     self.w2c[w] = c
 
-        self.answers = ['<yes>', '<no>', '<n/a>']
+        self.answer_tokens = ['<yes>', '<no>', '<n/a>']
+        self.answers = {
+            'yes': self['<yes>'],
+            'no': self['<no>'],
+            'n/a': self['<n/a>']}
 
     def __len__(self):
         return len(self.w2i)
@@ -35,10 +39,13 @@ class Vocab():
             raise ValueError("Expected str or int but got {}".format(type(q)))
 
     def encode(self, x):
-        return [self.w2i[xi] for xi in x]
+        return [self[xi] for xi in x]
+
+    def encode_answer(self, x):
+        return [self.answers[x]]
 
     def decode(self, x):
-        return [self.i2w[xi] for xi in x]
+        return [self[xi] for xi in x]
 
     @classmethod
     def create(cls, file, min_occ):

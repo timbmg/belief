@@ -1,3 +1,4 @@
+import os
 import csv
 import gzip
 import json
@@ -20,7 +21,7 @@ class Vocab():
                     self.i2w[self.w2i[w]] = w
                     self.w2c[w] = c
 
-        self.answer_tokens = ['<yes>', '<no>', '<n/a>']
+        self.answer_tokens = [self['<yes>'], self['<no>'], self['<n/a>']]
         self.answers = {
             'yes': self['<yes>'],
             'no': self['<no>'],
@@ -48,9 +49,9 @@ class Vocab():
         return [self[xi] for xi in x]
 
     @classmethod
-    def create(cls, file, min_occ):
+    def create(cls, data_dir, file, min_occ):
 
-        special_tokens = ['<pad>', '<unk>', '<sos>', '<eos>', '<yes>', '<no>',
+        special_tokens = ['<pad>', '<unk>', '<sos>', '<eoq>', '<yes>', '<no>',
                           '<n/a>']
 
         w2c = Counter()
@@ -65,7 +66,7 @@ class Vocab():
                     words = tokenizer.tokenize(qa['question'])
                     w2c.update(words)
 
-        out_file = '..data/vocab.csv'
+        out_file = os.path.join(data_dir, 'vocab.csv')
         with open(out_file, 'w') as csvfile:
             writer = csv.writer(csvfile, delimiter=',', quotechar='|',
                                 quoting=csv.QUOTE_MINIMAL)

@@ -30,3 +30,28 @@ class Guesser(nn.Module):
         obj_emb = self.mlp(torch.cat([cat_emb, object_bboxes], dim=-1))
 
         return torch.bmm(obj_emb, dialogue_emb[0].permute(1, 2, 0)).squeeze(-1)
+
+    def save(self, file='bin/guesser.pt'):
+
+        params = dict()
+        params['num_embeddings'] = self.emb.num_embeddings
+        params['embedding_dim'] = self.emb.embedding_dim
+        params['num_categories'] = self.cat.num_embeddings
+        params['category_dim'] = self.cat.embedding_dim
+        params['hidden_size'] = self.rnn.rnn.hidden_size
+        params['mlp_hidden'] = self.mlp[0].out_features
+        params['state_dict'] = self.state_dict()
+
+        torch.save(params, file)
+
+    @classmethod
+    def load(cls, file='bin/guesser.pt'):
+        params = torch.load(file)
+
+        guesser = cls(params['num_embeddings'], params['embedding_dim'],
+                      params['num_categories'], params['category_dim'],
+                      params['hidden_size'], params['mlp_hidden'])
+
+        guesser.load_state_dict(params['state_dict'])
+
+        return guesser

@@ -1,0 +1,73 @@
+import os
+import torch
+import argparse
+from collections import OrderedDict
+from torch.utils.data import DataLoader
+
+from models import QGen
+from utils import Vocab, CategoryVocab, QuestionerDataset
+
+
+def main(args):
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    vocab = Vocab(os.path.join(args.data_dir, 'vocab.csv'), args.min_occ)
+    category_vocab = CategoryVocab(os.path.join(args.data_dir,
+                                                'categories.csv'))
+
+    data_loader = OrderedDict()
+    splits = ['train', 'valid']
+    splits = ['valid']
+    for split in splits:
+        file = os.path.join(args.data_dir, 'guesswhat.' + split + '.jsonl.gz')
+        data_loader[split] = DataLoader(
+            dataset=QuestionerDataset(file, vocab, category_vocab, True),
+            batch_size=args.batch_size,
+            shuffle=split == 'train',
+            collate_fn=QuestionerDataset.get_collate_fn(device))
+
+    model = QGen(len(vocab), args.word_embedding_dim, args.num_visual_features,
+                 args.visual_embedding_dim, args.hidden_size)
+
+    loss_fn = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
+
+    for epoch in range(args.epochs):
+        for split in splits:
+            for bi, batch in enumerate(data_loader[split]):
+
+                logits = model(
+                    dialogue=batch['source_dialogue'],
+                    dialogue_lengths=batch['dialogue_lengths'],
+                    visual_features=torch.Tensor(batch['source_dialogue'].size(0), args.num_visual_features).random_()) # batch['visual_features'])
+
+                loss = loss_fn(logits.view(-1, len(vocab)),
+                               batch['target_dialogue'].view(-1))
+
+                if split == 'train':
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-d', '--data-dir', type=str, default='data')
+    parser.add_argument('-c', '--coco-dir', type=str)
+
+    parser.add_argument('-ep', '--epochs', type=int, default=100)
+    parser.add_argument('-bs', '--batch-size', type=int, default=32)
+    parser.add_argument('-lr', '--learning-rate', type=float, default=0.001)
+    parser.add_argument('-mo', '--min-occ', type=int, default=3)
+
+    parser.add_argument('-we', '--word-embedding-dim', type=int, default=256)
+    parser.add_argument('-nv', '--num-visual-features', type=int, default=1000)
+    parser.add_argument('-ve', '--visual-embedding-dim', type=int,
+                        default=256)
+    parser.add_argument('-hs', '--hidden-size', type=int, default=512)
+
+    args = parser.parse_args()
+
+    main(args)

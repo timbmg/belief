@@ -18,7 +18,6 @@ def main(args):
 
     data_loader = OrderedDict()
     splits = ['train', 'valid']
-    splits = ['valid']
     for split in splits:
         file = os.path.join(args.data_dir, 'guesswhat.' + split + '.jsonl.gz')
         data_loader[split] = DataLoader(

@@ -70,16 +70,16 @@ if __name__ == "__main__":
     parser.add_argument('-d', '--data-dir', type=str, default='data')
     parser.add_argument('-c', '--coco-dir', type=str)
 
-    parser.add_argument('-ep', '--epochs', type=int, default=100)
+    parser.add_argument('-ep', '--epochs', type=int, default=30)
     parser.add_argument('-bs', '--batch-size', type=int, default=32)
-    parser.add_argument('-lr', '--learning-rate', type=float, default=0.001)
+    parser.add_argument('-lr', '--learning-rate', type=float, default=0.0001)
     parser.add_argument('-mo', '--min-occ', type=int, default=3)
 
-    parser.add_argument('-we', '--word-embedding-dim', type=int, default=256)
+    parser.add_argument('-we', '--word-embedding-dim', type=int, default=512)
     parser.add_argument('-nv', '--num-visual-features', type=int, default=1000)
     parser.add_argument('-ve', '--visual-embedding-dim', type=int,
-                        default=256)
-    parser.add_argument('-hs', '--hidden-size', type=int, default=512)
+                        default=512)
+    parser.add_argument('-hs', '--hidden-size', type=int, default=1024)
 
     args = parser.parse_args()
 

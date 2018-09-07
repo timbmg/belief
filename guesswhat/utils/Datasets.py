@@ -1,6 +1,11 @@
+import os
 import gzip
+import h5py
 import json
 import torch
+import numpy as np
+from PIL import Image
+from torchvision import transforms
 from collections import defaultdict
 from torch.utils.data import Dataset
 from nltk.tokenize import TweetTokenizer
@@ -8,9 +13,21 @@ from nltk.tokenize import TweetTokenizer
 
 class QuestionerDataset(Dataset):
 
-    def __init__(self, file, vocab, category_vocab, successful_only):
+    def __init__(self, file, vocab, category_vocab, successful_only, data_dir='data'):
 
         self.data = defaultdict(dict)
+
+        features_file = os.path.join(data_dir, 'vgg_fc8.hdf5')
+        mapping_file = os.path.join(data_dir, 'imagefile2id.json')
+        for f in [features_file, mapping_file]:
+            if not os.path.exists(f):
+                raise FileNotFoundError("{} file not found." +
+                                        "Please create with " +
+                                        "utils/cache_visual_features.py"
+                                        .format(features_file))
+
+        self.features = np.asarray(h5py.File(features_file, 'r')['vgg_fc8'])
+        self.mapping = json.load(open(mapping_file))
 
         tokenizer = TweetTokenizer(preserve_case=False)
         with gzip.open(file, 'r') as file:
@@ -48,6 +65,9 @@ class QuestionerDataset(Dataset):
 
                 num_objects = len(object_categories)
 
+                image = game['image']['file_name']
+                image_featuers = self.features[self.mapping[image]]
+
                 idx = len(self.data)
                 self.data[idx]['source_dialogue'] = source_dialogue
                 self.data[idx]['target_dialogue'] = target_dialogue
@@ -56,8 +76,9 @@ class QuestionerDataset(Dataset):
                 self.data[idx]['object_bboxes'] = object_bboxes
                 self.data[idx]['target_id'] = target_id
                 self.data[idx]['num_objects'] = num_objects
-                self.data[idx]['image'] = game['image']['file_name']
-                self.data[idx]['url'] = game['image']['flickr_url']
+                self.data[idx]['image_url'] = game['image']['flickr_url']
+                self.data[idx]['image'] = image
+                self.data[idx]['image_featuers'] = image_featuers
 
     def __len__(self):
         return len(self.data)
@@ -92,7 +113,7 @@ class QuestionerDataset(Dataset):
                     batch[key].append(item[key])
 
             for k in batch.keys():
-                if k in ['image', 'url']:
+                if k in ['image', 'image_url']:
                     pass
                 else:
                     batch[k] = torch.Tensor(batch[k]).to(device)

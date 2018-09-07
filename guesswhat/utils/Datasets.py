@@ -89,27 +89,26 @@ class QuestionerDataset(Dataset):
     def get_collate_fn(device):
 
         def collate_fn(data):
-            keys = list(data[0].keys())
             max_dialogue_length = max([d['dialogue_lengths'] for d in data])
             max_num_objects = max([d['num_objects'] for d in data])
 
             batch = defaultdict(list)
-            for item in data:
-                for key in keys:
-
+            for item in data:  # TODO: refactor to example
+                for key in data[0].keys():
+                    padded = item[key][:] if isinstance(item[key], list) \
+                             else item[key]
                     if key in ['source_dialogue', 'target_dialogue']:
-                        item[key].extend(
+                        padded.extend(
                             [0]*(max_dialogue_length-item['dialogue_lengths']))
-
-                    if key in ['object_categories']:
-                        item[key].extend(
+                    elif key in ['object_categories']:
+                        padded.extend(
                             [0]*(max_num_objects-item['num_objects']))
 
-                    if key in ['object_bboxes']:
-                        item[key].extend(
+                    elif key in ['object_bboxes']:
+                        padded.extend(
                             [[0]*8]*(max_num_objects-item['num_objects']))
 
-                    batch[key].append(item[key])
+                    batch[key].append(padded)
 
             for k in batch.keys():
                 if k in ['image', 'image_url']:
@@ -179,18 +178,18 @@ class OracleDataset(Dataset):
     def get_collate_fn(device):
 
         def collate_fn(data):
-            keys = list(data[0].keys())
             max_question_lengths = max([d['question_lengths'] for d in data])
 
             batch = defaultdict(list)
             for item in data:
-                for key in keys:
-
+                for key in data[0].keys():
+                    padded = item[key][:] if isinstance(item[key], list) \
+                             else item[key]
                     if key in ['question']:
-                        item[key].extend([0]*(max_question_lengths
-                                              - item['question_lengths']))
+                        padded.extend([0]*(max_question_lengths
+                                           - item['question_lengths']))
 
-                    batch[key].append(item[key])
+                    batch[key].append(padded)
 
             for k in batch.keys():
                 batch[k] = torch.Tensor(batch[k]).to(device)

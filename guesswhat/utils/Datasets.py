@@ -4,8 +4,6 @@ import h5py
 import json
 import torch
 import numpy as np
-from PIL import Image
-from torchvision import transforms
 from collections import defaultdict
 from torch.utils.data import Dataset
 from nltk.tokenize import TweetTokenizer
@@ -13,7 +11,8 @@ from nltk.tokenize import TweetTokenizer
 
 class QuestionerDataset(Dataset):
 
-    def __init__(self, file, vocab, category_vocab, successful_only, data_dir='data'):
+    def __init__(self, file, vocab, category_vocab, successful_only,
+                 data_dir='data'):
 
         self.data = defaultdict(dict)
 
@@ -188,8 +187,8 @@ class OracleDataset(Dataset):
                 for key in keys:
 
                     if key in ['question']:
-                        item[key].extend(
-                            [0]*(max_question_lengths-item['question_lengths']))
+                        item[key].extend([0]*(max_question_lengths
+                                              - item['question_lengths']))
 
                     batch[key].append(item[key])
 

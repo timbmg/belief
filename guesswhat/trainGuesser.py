@@ -10,6 +10,10 @@ from utils import Vocab, CategoryVocab, QuestionerDataset
 
 def main(args):
 
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     vocab = Vocab(os.path.join(args.data_dir, 'vocab.csv'), args.min_occ)
@@ -62,6 +66,8 @@ def main(args):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
+    parser.add_argument('-s', '--seed', type=int, default=1)
+
     parser.add_argument('-d', '--data-dir', type=str, default='data')
     parser.add_argument('-c', '--coco-dir', type=str)
 

@@ -46,7 +46,7 @@ def main(args):
             else:
                 model.eval()
                 torch.no_grad()
-                
+
             for bi, batch in enumerate(data_loader[split]):
 
                 logits = model(
@@ -71,14 +71,14 @@ if __name__ == "__main__":
     parser.add_argument('-d', '--data-dir', type=str, default='data')
     parser.add_argument('-c', '--coco-dir', type=str)
 
-    parser.add_argument('-ep', '--epochs', type=int, default=100)
-    parser.add_argument('-bs', '--batch-size', type=int, default=32)
-    parser.add_argument('-lr', '--learning-rate', type=float, default=0.001)
+    parser.add_argument('-ep', '--epochs', type=int, default=20)
+    parser.add_argument('-bs', '--batch-size', type=int, default=64)
+    parser.add_argument('-lr', '--learning-rate', type=float, default=0.0001)
     parser.add_argument('-mo', '--min-occ', type=int, default=3)
 
-    parser.add_argument('-we', '--word-embedding-dim', type=int, default=256)
+    parser.add_argument('-we', '--word-embedding-dim', type=int, default=300)
     parser.add_argument('-ce', '--category-embedding-dim', type=int,
-                        default=256)
+                        default=512)
     parser.add_argument('-hs', '--hidden-size', type=int, default=512)
     parser.add_argument('-mh', '--mlp-hidden', type=int, default=512)
 

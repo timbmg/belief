@@ -39,7 +39,7 @@ def main(args):
                 logits = model(
                     dialogue=batch['source_dialogue'],
                     dialogue_lengths=batch['dialogue_lengths'],
-                    visual_features=torch.Tensor(batch['source_dialogue'].size(0), args.num_visual_features).random_()) # batch['visual_features'])
+                    visual_features=batch['image_featuers'])
 
                 loss = loss_fn(logits.view(-1, len(vocab)),
                                batch['target_dialogue'].view(-1))

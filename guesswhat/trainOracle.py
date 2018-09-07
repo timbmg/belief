@@ -35,6 +35,14 @@ def main(args):
 
     for epoch in range(args.epochs):
         for split in splits:
+
+            if split == 'train':
+                model.train()
+                torch.enable_grad()
+            else:
+                model.eval()
+                torch.no_grad()
+                
             for bi, batch in enumerate(data_loader[split]):
 
                 logits = model(

@@ -5,7 +5,7 @@ from collections import OrderedDict
 from torch.utils.data import DataLoader
 
 from models import QGen
-from utils import Vocab, CategoryVocab, QuestionerDataset
+from utils import Vocab, CategoryVocab, QuestionerDataset, eval_epoch
 
 
 def main(args):
@@ -31,35 +31,26 @@ def main(args):
             collate_fn=QuestionerDataset.get_collate_fn(device))
 
     model = QGen(len(vocab), args.word_embedding_dim, args.num_visual_features,
-                 args.visual_embedding_dim, args.hidden_size)
+                 args.visual_embedding_dim, args.hidden_size).to(device)
 
     loss_fn = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
 
+    forward_kwargs_mapping = {
+        'dialogue': 'source_dialogue',
+        'dialogue_lengths': 'dialogue_lengths',
+        'visual_features': 'image_featuers'}
+
+    target_kwarg = 'target_dialogue'
+
     for epoch in range(args.epochs):
-        for split in splits:
+        train_loss, train_acc = eval_epoch(model, data_loader['train'],
+                                           forward_kwargs_mapping,
+                                           target_kwarg, loss_fn, optimizer)
 
-            if split == 'train':
-                model.train()
-                torch.enable_grad()
-            else:
-                model.eval()
-                torch.no_grad()
-
-            for bi, batch in enumerate(data_loader[split]):
-
-                logits = model(
-                    dialogue=batch['source_dialogue'],
-                    dialogue_lengths=batch['dialogue_lengths'],
-                    visual_features=batch['image_featuers'])
-
-                loss = loss_fn(logits.view(-1, len(vocab)),
-                               batch['target_dialogue'].view(-1))
-
-                if split == 'train':
-                    optimizer.zero_grad()
-                    loss.backward()
-                    optimizer.step()
+        valid_loss, valid_acc = eval_epoch(model, data_loader['valid'],
+                                           forward_kwargs_mapping,
+                                           target_kwarg, loss_fn)
 
 
 if __name__ == "__main__":

@@ -26,7 +26,7 @@ class QGen(nn.Module):
 
         outputs, _ = self.rnn(input_emb, dialogue_lengths)
 
-        return self.hidden2vocab(outputs)
+        return self.hidden2vocab(outputs).view(-1, self.emb.num_embeddings)
 
     def save(self, file='bin/qgen.pt'):
 

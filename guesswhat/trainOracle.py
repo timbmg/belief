@@ -5,7 +5,7 @@ from collections import OrderedDict
 from torch.utils.data import DataLoader
 
 from models import Oracle
-from utils import Vocab, CategoryVocab, OracleDataset
+from utils import Vocab, CategoryVocab, OracleDataset, eval_epoch
 
 
 def main(args):
@@ -32,35 +32,27 @@ def main(args):
 
     model = Oracle(len(vocab), args.word_embedding_dim, len(category_vocab),
                    args.category_embedding_dim, args.hidden_size,
-                   args.mlp_hidden)
+                   args.mlp_hidden).to(device)
 
     loss_fn = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
 
+    forward_kwargs_mapping = {
+        'question': 'question',
+        'question_lengths': 'question_lengths',
+        'object_categories': 'target_category',
+        'object_bboxes': 'target_bbox'}
+
+    target_kwarg = 'target_answer'
+
     for epoch in range(args.epochs):
-        for split in splits:
+        train_loss, train_acc = eval_epoch(model, data_loader['train'],
+                                           forward_kwargs_mapping,
+                                           target_kwarg, loss_fn, optimizer)
 
-            if split == 'train':
-                model.train()
-                torch.enable_grad()
-            else:
-                model.eval()
-                torch.no_grad()
-
-            for bi, batch in enumerate(data_loader[split]):
-
-                logits = model(
-                    question=batch['question'],
-                    question_lengths=batch['question_lengths'],
-                    object_categories=batch['target_category'],
-                    object_bboxes=batch['target_bbox'])
-
-                loss = loss_fn(logits, batch['target_answer'])
-
-                if split == 'train':
-                    optimizer.zero_grad()
-                    loss.backward()
-                    optimizer.step()
+        valid_loss, valid_acc = eval_epoch(model, data_loader['valid'],
+                                           forward_kwargs_mapping,
+                                           target_kwarg, loss_fn)
 
 
 if __name__ == "__main__":

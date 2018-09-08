@@ -41,6 +41,8 @@ class Guesser(nn.Module):
         params['hidden_size'] = self.rnn.rnn.hidden_size
         params['mlp_hidden'] = self.mlp[0].out_features
         params['state_dict'] = self.state_dict()
+        for k, v in params['state_dict'].items():
+            params['state_dict'][k] = v.cpu()
 
         torch.save(params, file)
 

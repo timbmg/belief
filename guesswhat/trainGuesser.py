@@ -1,6 +1,7 @@
 import os
 import torch
 import argparse
+from tensorboardX import SummaryWriter
 from collections import OrderedDict
 from torch.utils.data import DataLoader
 
@@ -9,6 +10,8 @@ from utils import Vocab, CategoryVocab, QuestionerDataset, eval_epoch
 
 
 def main(args):
+
+    logger = SummaryWriter('exp/guesser/baseline')
 
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
@@ -42,8 +45,10 @@ def main(args):
         'dialogue_lengths': 'dialogue_lengths',
         'object_categories': 'object_categories',
         'object_bboxes': 'object_bboxes'}
-
     target_kwarg = 'target_id'
+
+    best_val_acc = 0
+
     for epoch in range(args.epochs):
         train_loss, train_acc = eval_epoch(model, data_loader['train'],
                                            forward_kwargs_mapping,
@@ -52,6 +57,15 @@ def main(args):
         valid_loss, valid_acc = eval_epoch(model, data_loader['valid'],
                                            forward_kwargs_mapping,
                                            target_kwarg, loss_fn)
+
+        if valid_acc > best_val_acc:
+            best_val_acc = valid_acc
+            model.save()
+
+        logger.add_scalar('train_loss', train_loss, epoch)
+        logger.add_scalar('valid_loss', valid_loss, epoch)
+        logger.add_scalar('train_acc', train_acc, epoch)
+        logger.add_scalar('valid_acc', valid_acc, epoch)
 
 
 if __name__ == "__main__":

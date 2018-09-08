@@ -1,6 +1,7 @@
 import os
 import torch
 import argparse
+from tensorboardX import SummaryWriter
 from collections import OrderedDict
 from torch.utils.data import DataLoader
 
@@ -9,6 +10,8 @@ from utils import Vocab, CategoryVocab, QuestionerDataset, eval_epoch
 
 
 def main(args):
+
+    logger = SummaryWriter('exp/qgen/baseline')
 
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
@@ -33,16 +36,16 @@ def main(args):
     model = QGen(len(vocab), args.word_embedding_dim, args.num_visual_features,
                  args.visual_embedding_dim, args.hidden_size).to(device)
 
-    loss_fn = torch.nn.CrossEntropyLoss()
+    loss_fn = torch.nn.CrossEntropyLoss(ignore_index=0)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
 
     forward_kwargs_mapping = {
         'dialogue': 'source_dialogue',
         'dialogue_lengths': 'dialogue_lengths',
         'visual_features': 'image_featuers'}
-
     target_kwarg = 'target_dialogue'
 
+    best_val_loss = 0
     for epoch in range(args.epochs):
         train_loss, train_acc = eval_epoch(model, data_loader['train'],
                                            forward_kwargs_mapping,
@@ -51,6 +54,13 @@ def main(args):
         valid_loss, valid_acc = eval_epoch(model, data_loader['valid'],
                                            forward_kwargs_mapping,
                                            target_kwarg, loss_fn)
+
+        if valid_loss > best_val_loss:
+            best_val_loss = valid_loss
+            model.save()
+
+        logger.add_scalar('train_loss', train_loss, epoch)
+        logger.add_scalar('valid_loss', valid_loss, epoch)
 
 
 if __name__ == "__main__":

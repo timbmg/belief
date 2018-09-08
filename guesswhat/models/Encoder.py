@@ -15,7 +15,7 @@ class Encoder(nn.Module):
         self.rnn = cell(input_size, hidden_size,
                         bidirectional=bidirectional, batch_first=True)
 
-    def forward(self, input, lengths):
+    def forward(self, input, lengths, hx=None):
 
         if input.size(0) != lengths.size(0):
             raise AssertionError("Expected first dimension of input and " +
@@ -29,7 +29,7 @@ class Encoder(nn.Module):
                                                          batch_first=True)
 
         # rnn forward
-        packed_outputs, last_hidden = self.rnn(packed_input)
+        packed_outputs, last_hidden = self.rnn(packed_input, hx)
 
         # re-pad sequence
         outputs, _ = nn.utils.rnn.pad_packed_sequence(packed_outputs,

@@ -15,8 +15,6 @@ def eval_epoch(model, data_loader, forward_kwargs_mapping, target_kwarg,
 
     for batch in data_loader:
 
-        batch_size = batch[target_kwarg].size(0)
-
         model_kwargs = dict()
         for model_key, batch_key in forward_kwargs_mapping.items():
             model_kwargs[model_key] = batch[batch_key]

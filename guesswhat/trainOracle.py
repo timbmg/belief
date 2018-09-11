@@ -1,6 +1,7 @@
 import os
 import torch
 import argparse
+import datetime
 from collections import OrderedDict
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
@@ -11,7 +12,9 @@ from utils import Vocab, CategoryVocab, OracleDataset, eval_epoch
 
 def main(args):
 
-    logger = SummaryWriter('exp/oracle/baseline')
+    ts = datetime.datetime.now().timestamp()
+
+    logger = SummaryWriter('exp/oracle/baseline'.format(ts))
     logger.add_text('args', str(args))
 
     torch.manual_seed(args.seed)

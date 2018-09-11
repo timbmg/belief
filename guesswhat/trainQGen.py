@@ -1,9 +1,11 @@
 import os
 import torch
 import argparse
+import datetime
 from tensorboardX import SummaryWriter
 from collections import OrderedDict
 from torch.utils.data import DataLoader
+
 
 from models import QGen
 from utils import Vocab, CategoryVocab, QuestionerDataset, eval_epoch
@@ -11,7 +13,9 @@ from utils import Vocab, CategoryVocab, QuestionerDataset, eval_epoch
 
 def main(args):
 
-    logger = SummaryWriter('exp/qgen/baseline')
+    ts = datetime.datetime.now().timestamp()
+
+    logger = SummaryWriter('exp/qgen/baseline_{}'.format(ts))
     logger.add_text('args', str(args))
 
     torch.manual_seed(args.seed)
@@ -43,7 +47,7 @@ def main(args):
     forward_kwargs_mapping = {
         'dialogue': 'source_dialogue',
         'dialogue_lengths': 'dialogue_lengths',
-        'visual_features': 'image_featuers'}
+        'additional_features': 'image_featuers'}
     target_kwarg = 'target_dialogue'
 
     best_val_loss = 0

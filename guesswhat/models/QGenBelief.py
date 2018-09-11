@@ -63,13 +63,15 @@ class QGenBelief(nn.Module):
             # create mask with examples that have more questions
             running = qi < num_questions
 
-            logits[running, qi, :torch.max(question_lengths[running, qi])],\
-                (hx[0][:, running], hx[1][:, running]) = self.qgen(
+            logits[running, qi, :torch.max(question_lengths[running, qi])], = \
+                self.qgen(
                     source_questions[running, qi],
                     question_lengths[running, qi],
                     visual_features[running],
                     (hx[0][:, running], hx[1][:, running]) if qi > 0 else None,
                     flatten_output=False)
+
+            hx[0][:, running], hx[1][:, running] = self.qgen.last_hidden
 
         return logits.view(-1, self.qgen.emb.num_embeddings)
 

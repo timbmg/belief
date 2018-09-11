@@ -26,13 +26,13 @@ class QGen(nn.Module):
         input_emb = torch.cat([word_emb, visual_emb], dim=-1)
 
         # pass through encoder
-        outputs, last_hidden = self.encoder(input_emb, dialogue_lengths, hx)
+        outputs, self.last_hidden = self.encoder(input_emb, dialogue_lengths, hx)
 
         if flatten_output:
             return self.hidden2vocab(outputs)\
-                .view(-1, self.emb.num_embeddings), last_hidden
+                .view(-1, self.emb.num_embeddings)
         else:
-            return self.hidden2vocab(outputs), last_hidden
+            return self.hidden2vocab(outputs)
 
     def inference(self, input, hidden, additional_features,
                   end_of_question_token, strategy='greedy'):

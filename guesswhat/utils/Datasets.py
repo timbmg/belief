@@ -49,7 +49,7 @@ class QuestionerDataset(Dataset):
                     if obj['id'] == game['object_id']:
                         target_id = oi
 
-                source_dialogue = list()
+                source_dialogue = [vocab['<sos>']]
                 target_dialogue = list()
                 if unroll_dialogue:
                     source_questions = list()
@@ -65,8 +65,6 @@ class QuestionerDataset(Dataset):
                     source_dialogue += qa
 
                     if unroll_dialogue:
-                        # NOTE: cumulative_lengths will be offset by 1 because
-                        # <sos> is added to the sequence
                         cumulative_lengths += [len(source_dialogue)]
                         # QUESTION: +1 for answer?
                         question_lengths += [len(qa)]
@@ -79,9 +77,8 @@ class QuestionerDataset(Dataset):
                         previous_answer = [qa[-1]]
 
                 target_dialogue = [vocab['<eoq>'] if t in vocab.answer_tokens
-                                   else t for t in source_dialogue]
-                source_dialogue = [vocab['<sos>']] + source_dialogue
-                target_dialogue = target_dialogue + [vocab['<eoq>']]
+                                   else t for t in source_dialogue[1:]]
+                target_dialogue = target_dialogue + [vocab['<pad>']]
 
                 image = game['image']['file_name']
                 image_featuers = self.features[self.mapping[image]]

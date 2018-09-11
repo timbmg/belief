@@ -12,6 +12,7 @@ from utils import Vocab, CategoryVocab, QuestionerDataset, eval_epoch
 def main(args):
 
     logger = SummaryWriter('exp/qgen/baseline')
+    logger.add_text('args', str(args))
 
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
@@ -61,6 +62,9 @@ def main(args):
 
         logger.add_scalar('train_loss', train_loss, epoch)
         logger.add_scalar('valid_loss', valid_loss, epoch)
+
+        print(("Epoch {:2d}/{:2d} Train Loss {:06.3f} Vaild Loss {:06.3f}")
+              .format(epoch, args.epochs, train_loss, valid_loss))
 
 
 if __name__ == "__main__":

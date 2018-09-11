@@ -1,8 +1,8 @@
 import os
 import torch
 import argparse
-from tensorboardX import SummaryWriter
 from collections import OrderedDict
+from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 
 from models import Guesser
@@ -12,6 +12,7 @@ from utils import Vocab, CategoryVocab, QuestionerDataset, eval_epoch
 def main(args):
 
     logger = SummaryWriter('exp/guesser/baseline')
+    logger.add_text('args', str(args))
 
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
@@ -67,6 +68,11 @@ def main(args):
         logger.add_scalar('train_acc', train_acc, epoch)
         logger.add_scalar('valid_acc', valid_acc, epoch)
 
+        print(("Epoch {:2d}/{:2d} Train Loss {:06.3f} Vaild Loss {:06.3f} " +
+               "Train Acc {:06.3f} Vaild Acc {:06.3f}")
+              .format(epoch, args.epochs, train_loss, valid_loss,
+                      train_acc*100, valid_acc*100))
+
 
 if __name__ == "__main__":
 
@@ -78,7 +84,7 @@ if __name__ == "__main__":
 
     parser.add_argument('-ep', '--epochs', type=int, default=20)
     parser.add_argument('-bs', '--batch-size', type=int, default=64)
-    parser.add_argument('-lr', '--learning-rate', type=float, default=0.001)
+    parser.add_argument('-lr', '--learning-rate', type=float, default=0.0001)
     parser.add_argument('-mo', '--min-occ', type=int, default=3)
 
     parser.add_argument('-we', '--word-embedding-dim', type=int, default=512)

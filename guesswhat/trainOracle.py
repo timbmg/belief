@@ -2,6 +2,7 @@ import os
 import torch
 import argparse
 from collections import OrderedDict
+from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 
 from models import Oracle
@@ -9,6 +10,9 @@ from utils import Vocab, CategoryVocab, OracleDataset, eval_epoch
 
 
 def main(args):
+
+    logger = SummaryWriter('exp/oracle/baseline')
+    logger.add_text('args', str(args))
 
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
@@ -42,8 +46,9 @@ def main(args):
         'question_lengths': 'question_lengths',
         'object_categories': 'target_category',
         'object_bboxes': 'target_bbox'}
-
     target_kwarg = 'target_answer'
+
+    best_val_acc = 0
 
     for epoch in range(args.epochs):
         train_loss, train_acc = eval_epoch(model, data_loader['train'],
@@ -53,6 +58,20 @@ def main(args):
         valid_loss, valid_acc = eval_epoch(model, data_loader['valid'],
                                            forward_kwargs_mapping,
                                            target_kwarg, loss_fn)
+
+        if valid_acc > best_val_acc:
+            best_val_acc = valid_acc
+            model.save()
+
+        logger.add_scalar('train_loss', train_loss, epoch)
+        logger.add_scalar('valid_loss', valid_loss, epoch)
+        logger.add_scalar('train_acc', train_acc, epoch)
+        logger.add_scalar('valid_acc', valid_acc, epoch)
+
+        print(("Epoch {:2d}/{:2d} Train Loss {:06.3f} Vaild Loss {:06.3f} " +
+               "Train Acc {:06.3f} Vaild Acc {:06.3f}")
+              .format(epoch, args.epochs, train_loss, valid_loss,
+                      train_acc*100, valid_acc*100))
 
 
 if __name__ == "__main__":

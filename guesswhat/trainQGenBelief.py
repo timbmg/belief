@@ -2,8 +2,9 @@ import os
 import torch
 import argparse
 import datetime
-from tensorboardX import SummaryWriter
 from collections import OrderedDict
+from multiprocessing import cpu_count
+from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 
 from models import QGen, Guesser, QGenBelief
@@ -36,7 +37,8 @@ def main(args):
                                       unroll_dialogue=True),
             batch_size=args.batch_size,
             shuffle=split == 'train',
-            collate_fn=QuestionerDataset.get_collate_fn(device))
+            collate_fn=QuestionerDataset.get_collate_fn(device),
+            num_workers=cpu_count())
 
     guesser = Guesser.load(device)
     qgen = QGen(len(vocab), args.word_embedding_dim, args.num_visual_features,

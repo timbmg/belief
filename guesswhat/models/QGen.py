@@ -5,36 +5,43 @@ from .Encoder import Encoder
 
 class QGen(nn.Module):
 
-    def __init__(self, num_embeddings, embedding_dim, num_visual_features,
+    def __init__(self, num_embeddings, embedding_dim, num_additional_features,
                  visual_embedding_dim, hidden_size):
 
         super().__init__()
 
         self.emb = nn.Embedding(num_embeddings, embedding_dim)
-        self.visual_emb = nn.Linear(num_visual_features, visual_embedding_dim)
+        self.visual_emb = nn.Linear(num_additional_features,
+                                    visual_embedding_dim)
         self.encoder = Encoder(embedding_dim+visual_embedding_dim, hidden_size)
         self.hidden2vocab = nn.Linear(hidden_size, num_embeddings)
 
-    def forward(self, dialogue, dialogue_lengths, visual_features):
+    def forward(self, dialogue, dialogue_lengths, additional_features,
+                hx=None, flatten_output=True):
 
+        # prepare input embedding
         word_emb = self.emb(dialogue)
-
-        visual_emb = self.visual_emb(visual_features)
+        visual_emb = self.visual_emb(additional_features)
         visual_emb = visual_emb.unsqueeze(1).repeat(1, word_emb.size(1), 1)
-
         input_emb = torch.cat([word_emb, visual_emb], dim=-1)
 
-        outputs, _ = self.encoder(input_emb, dialogue_lengths)
+        # pass through encoder
+        outputs, last_hidden = self.encoder(input_emb, dialogue_lengths, hx)
 
-        return self.hidden2vocab(outputs).view(-1, self.emb.num_embeddings)
+        if flatten_output:
+            return self.hidden2vocab(outputs)\
+                .view(-1, self.emb.num_embeddings), last_hidden
+        else:
+            return self.hidden2vocab(outputs), last_hidden
 
-    def inference(self, dialogue, hidden, visual_features,
+    def inference(self, input, hidden, additional_features,
                   end_of_question_token, strategy='greedy'):
 
+        input.squeeze_(1)
         batch_size = input.size(0)
         batch_idx = input.new_tensor(list(range(batch_size))).long()
         running_idx = batch_idx.clone()
-        m = input.new_ones((batch_size)).byte()
+        # m = dialogue.new_ones((batch_size)).byte()
 
         if hidden is None:
             h = input.new_zeros((1, batch_size, self.encoder.rnn.hidden_size))\
@@ -44,7 +51,7 @@ class QGen(nn.Module):
         else:
             h, c = hidden
 
-        visual_features = visual_features.unsqueeze(1)
+        additional_features = additional_features.unsqueeze(1)
 
         lengths = input.new_zeros((batch_size)).long()
         generations = list()
@@ -53,15 +60,17 @@ class QGen(nn.Module):
 
             # QGen forward pass
             emb = self.emb(input[running_idx]).view(len(running_idx), 1, -1)
-            visual_emb = self.visual_emb(visual_features[running_idx])
+            visual_emb = self.visual_emb(additional_features[running_idx])
             input_emb = torch.cat((emb, visual_emb), dim=-1)
             outputs, (h[:, running_idx], c[:, running_idx]) = \
-                self.encoder(input_emb, (h[:, running_idx], c[:, running_idx]))
-            logits = self.h2v(outputs).squeeze(1)
+                self.encoder(input_emb,
+                             input.new_ones(len(running_idx)),
+                             (h[:, running_idx], c[:, running_idx]))
+            logits = self.hidden2vocab(outputs).squeeze(1)  # B x V
 
             # get generated token
             if strategy == 'greedy':
-                _, input[running_idx] = logits.topk(1)
+                input[running_idx] = logits.topk(1)[1].squeeze(1)
             elif strategy == 'sampling':
                 probs = nn.functional.softmax(logits, dim=-1)
                 input[running_idx] = probs.multinomial(num_samples=1)
@@ -70,13 +79,13 @@ class QGen(nn.Module):
                                  "'sampling' but got {}.".format(strategy))
 
             # update running idx
-            m = (input != end_of_question_token).squeeze(1)
+            m = (input != end_of_question_token)
             if m.sum() > 0:
                 running_idx = batch_idx.masked_select(m)
 
                 # save generation (excluding eoq tokens)
                 generated_idx = input.new_zeros((batch_size))
-                generated_idx.masked_scatter_(m, input[running_idx].squeeze(1))
+                generated_idx.masked_scatter_(m, input[running_idx])
                 generations.append(generated_idx)
 
                 # update lengths
@@ -85,7 +94,7 @@ class QGen(nn.Module):
             else:
                 break
 
-        return torch.stack(generations, dim=1), lengths, (h, c)
+        return torch.stack(generations, dim=1), lengths, h, c
 
     def save(self, file='bin/qgen.pt'):
 
@@ -102,7 +111,7 @@ class QGen(nn.Module):
         torch.save(params, file)
 
     @classmethod
-    def load(cls, file='bin/qgen.pt'):
+    def load(cls, device, file='bin/qgen.pt'):
         params = torch.load(file)
 
         qgen = cls(params['num_embeddings'],
@@ -112,5 +121,6 @@ class QGen(nn.Module):
                    params['hidden_size'])
 
         qgen.load_state_dict(params['state_dict'])
+        qgen = qgen.to(device)
 
         return qgen

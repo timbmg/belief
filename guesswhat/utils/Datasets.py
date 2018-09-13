@@ -4,6 +4,7 @@ import h5py
 import json
 import torch
 import numpy as np
+from copy import deepcopy
 from collections import defaultdict
 from torch.utils.data import Dataset
 from nltk.tokenize import TweetTokenizer
@@ -66,9 +67,8 @@ class QuestionerDataset(Dataset):
 
                     if unroll_dialogue:
                         cumulative_lengths += [len(source_dialogue)]
-                        # QUESTION: +1 for answer?
                         question_lengths += [len(qa)]
-                        unrolled_dialogue.append(source_dialogue[:])
+                        unrolled_dialogue.append(deepcopy(source_dialogue))
                         source_questions.append(previous_answer +
                                                 vocab.encode(question))
                         target_questions.append(vocab.encode(question) +
@@ -126,8 +126,7 @@ class QuestionerDataset(Dataset):
             batch = defaultdict(list)
             for item in data:  # TODO: refactor to example
                 for key in data[0].keys():
-                    padded = item[key][:] if isinstance(item[key], list) \
-                             else item[key]
+                    padded = deepcopy(item[key])
                     if key in ['source_dialogue', 'target_dialogue']:
                         padded.extend(
                             [0]*(max_dialogue_length
@@ -237,8 +236,7 @@ class OracleDataset(Dataset):
             batch = defaultdict(list)
             for item in data:
                 for key in data[0].keys():
-                    padded = item[key][:] if isinstance(item[key], list) \
-                             else item[key]
+                    padded = deepcopy(item[key])
                     if key in ['question']:
                         padded.extend([0]*(max_question_lengths
                                            - item['question_lengths']))
@@ -331,8 +329,7 @@ class InferenceDataset(Dataset):
             batch = defaultdict(list)
             for item in data:  # TODO: refactor to example
                 for key in data[0].keys():
-                    padded = item[key][:] if isinstance(item[key], list) \
-                             else item[key]
+                    padded = deepcopy(item[key])
                     if key in ['object_categories']:
                         padded.extend(
                             [0]*(max_num_objects-item['num_objects']))

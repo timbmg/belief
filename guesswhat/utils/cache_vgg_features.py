@@ -16,7 +16,8 @@ torch.no_grad()
 
 class ImageDataset(Dataset):
 
-    def __init__(self, data_dir, mscoco_dir, splits=['train', 'valid', 'test']):
+    def __init__(self, data_dir, mscoco_dir,
+                 splits=['train', 'valid', 'test']):
 
         self.train_coco = os.path.join(mscoco_dir, 'train2014')
         self.valid_coco = os.path.join(mscoco_dir, 'val2014')
@@ -54,7 +55,7 @@ class ImageDataset(Dataset):
 
 def main(args):
 
-    h5_file = h5py.File(os.path.join(args.data_dir, "vgg_fc8.hdf5"), "w")
+    h5_file = h5py.File(os.path.join(args.data_dir, "vgg_fc8_test.hdf5"), "w")
     dset = None
 
     vgg = vgg16(pretrained=True)
@@ -90,8 +91,8 @@ def main(args):
             print("{}/{}".format(i, len(data_loader)))
 
     mapping = dict()
-    for file in id2file:
-        mapping[file] = len(mapping)
+    for id, file in enumerate(id2file):
+        mapping[file] = id
 
     json.dump(mapping, open(os.path.join(args.data_dir, 'imagefile2id.json'),
                             'w'))

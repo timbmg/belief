@@ -63,6 +63,7 @@ class QGenBelief(nn.Module):
             # create mask with examples that have more questions
             running = qi < num_questions
 
+            # qgen forward pass for next question
             logits[running, qi, :torch.max(question_lengths[running, qi])], = \
                 self.qgen(
                     source_questions[running, qi],

@@ -212,12 +212,11 @@ class OracleDataset(Dataset):
                 for qa in game['qas']:
                     question = tokenizer.tokenize(qa['question'])
                     question = vocab.encode(question)
-                    question_lengths = len(question)
                     answer = self.answer2class[qa['answer'].lower()]
 
                     idx = len(self.data)
                     self.data[idx]['question'] = question
-                    self.data[idx]['question_lengths'] = question_lengths
+                    self.data[idx]['question_lengths'] = len(question)
                     self.data[idx]['target_answer'] = answer
                     self.data[idx]['target_id'] = target_id
                     self.data[idx]['target_category'] = target_category
@@ -314,6 +313,7 @@ class InferenceDataset(Dataset):
                 self.data[idx]['target_bbox'] = target_bbox
                 self.data[idx]['num_objects'] = num_objects
                 self.data[idx]['image'] = image
+                self.data[idx]['image_url'] = game['image']['flickr_url']
                 self.data[idx]['image_featuers'] = image_featuers
 
     def __len__(self):

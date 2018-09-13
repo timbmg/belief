@@ -26,7 +26,8 @@ class QGen(nn.Module):
         input_emb = torch.cat([word_emb, visual_emb], dim=-1)
 
         # pass through encoder
-        outputs, self.last_hidden = self.encoder(input_emb, dialogue_lengths, hx)
+        outputs, self.last_hidden = \
+            self.encoder(input_emb, dialogue_lengths, hx)
 
         if flatten_output:
             return self.hidden2vocab(outputs)\
@@ -41,7 +42,6 @@ class QGen(nn.Module):
         batch_size = input.size(0)
         batch_idx = input.new_tensor(list(range(batch_size))).long()
         running_idx = batch_idx.clone()
-        # m = dialogue.new_ones((batch_size)).byte()
 
         if hidden is None:
             h = input.new_zeros((1, batch_size, self.encoder.rnn.hidden_size))\

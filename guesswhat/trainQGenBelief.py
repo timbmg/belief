@@ -3,7 +3,6 @@ import torch
 import argparse
 import datetime
 from collections import OrderedDict
-from multiprocessing import cpu_count
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 
@@ -15,7 +14,7 @@ def main(args):
 
     ts = datetime.datetime.now().timestamp()
 
-    logger = SummaryWriter('exp/qgenbelief'.format(ts))
+    logger = SummaryWriter('exp/qgenbelief/sanity_{}'.format(ts))
     logger.add_text('args', str(args))
 
     torch.manual_seed(args.seed)
@@ -37,8 +36,7 @@ def main(args):
                                       unroll_dialogue=True),
             batch_size=args.batch_size,
             shuffle=split == 'train',
-            collate_fn=QuestionerDataset.get_collate_fn(device),
-            num_workers=cpu_count())
+            collate_fn=QuestionerDataset.get_collate_fn(device))
 
     guesser = Guesser.load(device)
     qgen = QGen(len(vocab), args.word_embedding_dim, args.num_visual_features,
@@ -86,7 +84,6 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--seed', type=int, default=1)
 
     parser.add_argument('-d', '--data-dir', type=str, default='data')
-    parser.add_argument('-c', '--coco-dir', type=str)
 
     parser.add_argument('-ep', '--epochs', type=int, default=30)
     parser.add_argument('-bs', '--batch-size', type=int, default=32)

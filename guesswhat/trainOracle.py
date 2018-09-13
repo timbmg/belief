@@ -14,7 +14,7 @@ def main(args):
 
     ts = datetime.datetime.now().timestamp()
 
-    logger = SummaryWriter('exp/oracle/baseline'.format(ts))
+    logger = SummaryWriter('exp/oracle/baseline_{}'.format(ts))
     logger.add_text('args', str(args))
 
     torch.manual_seed(args.seed)

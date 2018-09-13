@@ -14,7 +14,7 @@ def main(args):
 
     ts = datetime.datetime.now().timestamp()
 
-    logger = SummaryWriter('exp/guesser/baseline'.format(ts))
+    logger = SummaryWriter('exp/guesser/baseline_{}'.format(ts))
     logger.add_text('args', str(args))
 
     torch.manual_seed(args.seed)

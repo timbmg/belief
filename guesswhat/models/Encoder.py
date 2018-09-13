@@ -28,6 +28,12 @@ class Encoder(nn.Module):
         packed_input = nn.utils.rnn.pack_padded_sequence(input, sorted_lengths,
                                                          batch_first=True)
 
+        # sort hidden by sequence length
+        if hx is not None:
+            if isinstance(hx, tuple):
+                hx = hx[0][:, sorted_idx], hx[1][:, sorted_idx]
+            else:
+                hx = hx[:, sorted_idx]
         # rnn forward
         packed_outputs, last_hidden = self.rnn(packed_input, hx)
 

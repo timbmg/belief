@@ -16,12 +16,15 @@ class QGenBelief(nn.Module):
                 unrolled_dialogue, cumulative_lengths, num_questions,
                 object_categories, object_bboxes):
 
+        torch.no_grad()
         batch_size = source_questions.size(0)
-        max_que = torch.max(num_questions)
-        max_qln = torch.max(question_lengths)
-        pad_que = len(cumulative_lengths.view(-1))
-        max_obj = object_categories.size(1)
+        max_que = torch.max(num_questions)  # most q's in a dialogue
+        max_qln = torch.max(question_lengths)  # most tokens in a dialogue
+        pad_que = len(cumulative_lengths.view(-1))  # total num of q's
+        max_obj = object_categories.size(1)  # most obj's in the batch
 
+        # mask to remove q's which only contain pad tokens
+        # note cumulative_lengths is zero padded
         rem_pad = cumulative_lengths.view(-1) > 0
 
         # merge batch and num_questions dimension
@@ -37,7 +40,7 @@ class QGenBelief(nn.Module):
             .repeat(1, max_que, 1, 1).view(-1, max_obj, 8)[rem_pad]
 
         # get object probabilities after each q/a in the dialogue
-        object_beliefs = torch.zeros(pad_que, max_obj)
+        object_beliefs = object_bboxes.new_zeros((pad_que, max_obj))
         object_beliefs[rem_pad] = self.softmax(
             self.guesser(
                 dialogue=unrolled_dialogue,
@@ -48,6 +51,7 @@ class QGenBelief(nn.Module):
         object_beliefs = object_beliefs.detach()
         object_beliefs = object_beliefs.view(-1, max_que, max_obj)
 
+        torch.enable_grad()
         # initiliaze hidden state
         hx = visual_features.new_zeros((1, batch_size,
                                         self.qgen.encoder.rnn.hidden_size))
@@ -64,7 +68,7 @@ class QGenBelief(nn.Module):
             running = qi < num_questions
 
             # qgen forward pass for next question
-            logits[running, qi, :torch.max(question_lengths[running, qi])], = \
+            logits[running, qi, :torch.max(question_lengths[running, qi])] = \
                 self.qgen(
                     source_questions[running, qi],
                     question_lengths[running, qi],

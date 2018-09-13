@@ -3,10 +3,8 @@ import torch
 import argparse
 import datetime
 from collections import OrderedDict
-from multiprocessing import cpu_count
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
-
 
 from models import QGen
 from utils import Vocab, CategoryVocab, QuestionerDataset, eval_epoch
@@ -37,8 +35,7 @@ def main(args):
             dataset=QuestionerDataset(file, vocab, category_vocab, True),
             batch_size=args.batch_size,
             shuffle=split == 'train',
-            collate_fn=QuestionerDataset.get_collate_fn(device),
-            num_workers=cpu_count())
+            collate_fn=QuestionerDataset.get_collate_fn(device))
 
     model = QGen(len(vocab), args.word_embedding_dim, args.num_visual_features,
                  args.visual_embedding_dim, args.hidden_size).to(device)
@@ -52,7 +49,7 @@ def main(args):
         'additional_features': 'image_featuers'}
     target_kwarg = 'target_dialogue'
 
-    best_val_loss = 0
+    best_val_loss = 1e9
     for epoch in range(args.epochs):
         train_loss, _ = eval_epoch(model, data_loader['train'],
                                    forward_kwargs_mapping, target_kwarg,
@@ -62,7 +59,7 @@ def main(args):
                                    forward_kwargs_mapping, target_kwarg,
                                    loss_fn)
 
-        if valid_loss > best_val_loss:
+        if valid_loss < best_val_loss:
             best_val_loss = valid_loss
             model.save()
 

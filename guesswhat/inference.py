@@ -5,7 +5,7 @@ import numpy as np
 from collections import OrderedDict
 from torch.utils.data import DataLoader
 
-from models import QGen, Guesser, Oracle
+from models import QGen, Guesser, Oracle, QGenBelief
 from utils import Vocab, CategoryVocab, InferenceDataset
 from utils.eval import accuarcy
 
@@ -28,11 +28,15 @@ def main(args):
             batch_size=args.batch_size,
             collate_fn=InferenceDataset.get_collate_fn(device))
 
-    qgen = QGen.load(device)
-    guesser = Guesser.load(device)
-    oracle = Oracle.load(device)
+    if not args.belief_state:
+        qgen = QGen.load(device, file=args.qgen_file)
+    else:
+        qgen = QGenBelief.load(device, file=args.qgen_file)
+    guesser = Guesser.load(device, file=args.guesser_file)
+    oracle = Oracle.load(device, file=args.oracle_file)
 
     torch.no_grad()
+    belief_kwargs = dict()
 
     for split in splits:
 
@@ -42,17 +46,25 @@ def main(args):
             batch_size = sample['source_dialogue'].size(0)
             dialogue = sample['source_dialogue'].clone()
             dialogue_lengths = dialogue.new_ones(batch_size)
-            additional_features = sample['image_featuers']
+            visual_features = sample['image_featuers']
             input = torch.LongTensor(batch_size).fill_(vocab['<sos>'])\
                 .to(device).unsqueeze(1)
 
+            if args.belief_state:
+                belief_kwargs['dialogue'] = dialogue
+                belief_kwargs['dialogue_lengths'] = dialogue_lengths
+                belief_kwargs['object_categories'] = \
+                    sample['object_categories']
+                belief_kwargs['object_bboxes'] = sample['object_bboxes']
+                belief_kwargs['num_objects'] = sample['num_objects']
+
             questions, questions_lengths, h, c = qgen.inference(
                 input=input,
-                additional_features=additional_features,
+                visual_features=visual_features,
                 end_of_question_token=vocab['<eoq>'],
                 hidden=None,
-                strategy=args.strategy
-            )
+                strategy=args.strategy,
+                **belief_kwargs)
 
             for _ in range(1, args.max_num_questions+1):
 
@@ -82,25 +94,32 @@ def main(args):
                     appendix_lengths=answers.new_ones(answers.size(0)))
                 dialogue_lengths += 1
 
+                if args.belief_state:
+                    # update dialogue with new q/a pair
+                    belief_kwargs['dialogue'] = dialogue
+                    belief_kwargs['dialogue_lengths'] = dialogue_lengths
+
                 # ask next question
                 questions, questions_lengths, h, c = qgen.inference(
                     input=answers,
-                    additional_features=additional_features,
+                    visual_features=visual_features,
                     end_of_question_token=vocab.w2i['<eoq>'],
                     hidden=(h, c),
-                    strategy=args.strategy)
+                    strategy=args.strategy,
+                    **belief_kwargs)
 
             object_logits = guesser(
                 dialogue=dialogue,
                 dialogue_lengths=dialogue_lengths,
                 object_categories=sample['object_categories'],
-                object_bboxes=sample['object_bboxes'])
+                object_bboxes=sample['object_bboxes'],
+                num_objects=sample['num_objects'])
 
             acc = accuarcy(object_logits, sample['target_id'])
             total_acc += [acc]
             # print(np.mean(total_acc))
 
-        print("{} Accuaracy {}".format(split.upper(), np.mean(total_acc)))
+        print("{} Accuracy {}".format(split.upper(), np.mean(total_acc)))
 
 
 def append_to_padded_sequence(padded_sequence, sequence_lengths, appendix,
@@ -135,6 +154,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
 
+    parser.add_argument('-belief', '--belief-state', action='store_true')
+
     # Dataset Settings
     parser.add_argument('-d', '--data_dir', type=str, default='data')
 
@@ -146,6 +167,13 @@ if __name__ == "__main__":
     parser.add_argument('-nw', '--num_workers', type=int, default=2)
     parser.add_argument('-train', '--train_set', action='store_true')
     parser.add_argument('-test', '--test_set', action='store_true')
+
+    # .pt files
+    parser.add_argument('-oracle', '--oracle-file', type=str,
+                        default='bin/oracle.pt')
+    parser.add_argument('-guesser', '--guesser-file', type=str,
+                        default='bin/guesser.pt')
+    parser.add_argument('-qgen', '--qgen-file', type=str, required=True)
 
     args = parser.parse_args()
 

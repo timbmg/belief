@@ -2,7 +2,7 @@ import torch
 
 
 def eval_epoch(model, data_loader, forward_kwargs_mapping, target_kwarg,
-               loss_fn, optimizer=None):
+               loss_fn, optimizer=None, logger=None):
 
     epoch_loss, epoch_acc = 0, 0
 
@@ -13,7 +13,7 @@ def eval_epoch(model, data_loader, forward_kwargs_mapping, target_kwarg,
         model.eval()
         torch.no_grad()
 
-    for batch in data_loader:
+    for iteration, batch in enumerate(data_loader):
 
         model_kwargs = dict()
         for model_key, batch_key in forward_kwargs_mapping.items():
@@ -36,5 +36,5 @@ def eval_epoch(model, data_loader, forward_kwargs_mapping, target_kwarg,
 
 def accuarcy(logits, targets):
 
-    return torch.eq(logits.topk(1)[1].view(-1), targets.view(-1)).sum().item()\
-           / targets.size(0)
+    return torch.eq(logits.topk(1)[1].view(-1),
+                    targets.view(-1)).sum().item() / targets.size(0)

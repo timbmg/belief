@@ -40,6 +40,7 @@ class Encoder(nn.Module):
         # re-pad sequence
         outputs, _ = nn.utils.rnn.pad_packed_sequence(packed_outputs,
                                                       batch_first=True)
+        # un-sort
         _, reversed_idx = torch.sort(sorted_idx)
         outputs = outputs[reversed_idx]
         if isinstance(last_hidden, tuple):

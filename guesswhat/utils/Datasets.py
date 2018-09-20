@@ -53,12 +53,9 @@ class QuestionerDataset(Dataset):
                 source_dialogue = [vocab['<sos>']]
                 target_dialogue = list()
                 if unroll_dialogue:
-                    source_questions = list()
-                    target_questions = list()
-                    question_lengths = list()
-                    cumulative_lengths = list()
-                    unrolled_dialogue = list()
-                    previous_answer = [vocab['<sos>']]
+                    cumulative_lengths = [1]
+                    question_lengths = [1]
+                    cumulative_dialogue = [deepcopy(source_dialogue)]
                 for qi, qa in enumerate(game['qas']):
                     question = tokenizer.tokenize(qa['question'])
                     qa = vocab.encode(question) \
@@ -68,14 +65,9 @@ class QuestionerDataset(Dataset):
                     if unroll_dialogue:
                         cumulative_lengths += [len(source_dialogue)]
                         question_lengths += [len(qa)]
-                        unrolled_dialogue.append(deepcopy(source_dialogue))
-                        source_questions.append(previous_answer +
-                                                vocab.encode(question))
-                        target_questions.append(vocab.encode(question) +
-                                                [vocab['<eoq>']])
+                        cumulative_dialogue.append(deepcopy(source_dialogue))
 
-                        previous_answer = [qa[-1]]
-
+                # remove answers from target dialogue
                 target_dialogue = [vocab['<eoq>'] if t in vocab.answer_tokens
                                    else t for t in source_dialogue[1:]]
                 target_dialogue = target_dialogue + [vocab['<pad>']]
@@ -95,12 +87,9 @@ class QuestionerDataset(Dataset):
                 self.data[idx]['image'] = image
                 self.data[idx]['image_featuers'] = image_featuers
                 if unroll_dialogue:
-                    self.data[idx]['source_questions'] = source_questions
-                    self.data[idx]['target_questions'] = target_questions
-                    self.data[idx]['num_questions'] = len(game['qas'])
-                    self.data[idx]['question_lengths'] = question_lengths
+                    self.data[idx]['num_questions'] = len(game['qas']) + 1  # including <sos>
                     self.data[idx]['cumulative_lengths'] = cumulative_lengths
-                    self.data[idx]['unrolled_dialogue'] = unrolled_dialogue
+                    self.data[idx]['cumulative_dialogue'] = cumulative_dialogue
 
     def __len__(self):
         return len(self.data)
@@ -115,13 +104,11 @@ class QuestionerDataset(Dataset):
 
             max_dialogue_length = max([d['dialogue_lengths'] for d in data])
             max_num_objects = max([d['num_objects'] for d in data])
-            if 'unrolled_dialogue' in data[0].keys():
+            if 'cumulative_dialogue' in data[0].keys():
                 max_num_questions = max([d['num_questions'] for d in data])
                 # NOTE: this should be the same as max_dialogue_length
                 max_cumulative_length = max([l for d in data
                                              for l in d['cumulative_lengths']])
-                max_question_length = max([l for d in data
-                                           for l in d['question_lengths']])
 
             batch = defaultdict(list)
             for item in data:  # TODO: refactor to example
@@ -132,23 +119,18 @@ class QuestionerDataset(Dataset):
                             [0]*(max_dialogue_length
                                  - item['dialogue_lengths']))
 
-                    elif key in ['cumulative_lengths', 'question_lengths']:
+                    elif key in ['cumulative_lengths']:
                         padded.extend(
                             [0]*(max_num_questions
                                  - len(item['cumulative_lengths'])))
 
-                    elif key in ['unrolled_dialogue', 'source_questions',
-                                 'target_questions']:
-                        if key in ['unrolled_dialogue']:
-                            pad_up_to = max_cumulative_length
-                        elif key in ['source_questions', 'target_questions']:
-                            pad_up_to = max_question_length
+                    elif key in ['cumulative_dialogue']:
                         for i in range(len(padded)):
-                                padded[i].extend([0]*(pad_up_to
-                                                      - len(padded[i])))
+                            padded[i].extend([0]*(max_cumulative_length
+                                                  - len(padded[i])))
                         # pad dialogue up to max_num_questions
                         padded.extend(
-                            [[0]*pad_up_to]
+                            [[0]*max_cumulative_length]
                             * (max_num_questions - item['num_questions']))
 
                     elif key in ['object_categories']:
@@ -165,13 +147,18 @@ class QuestionerDataset(Dataset):
                 if k in ['image', 'image_url']:
                     pass
                 else:
-                    batch[k] = torch.Tensor(batch[k]).to(device)
+                    try:
+                        batch[k] = torch.Tensor(batch[k]).to(device)
+                    except:
+                        print(k)
+                        print(batch[k])
+                        print(max_num_questions)
+                        raise
                     if k in ['source_dialogue', 'target_dialogue',
                              'num_questions', 'cumulative_lengths',
                              'dialogue_lengths', 'object_categories',
-                             'num_objects', 'target_id', 'unrolled_dialogue',
-                             'question_lengths', 'source_questions',
-                             'target_questions']:
+                             'num_objects', 'target_id',
+                             'cumulative_dialogue']:
                         batch[k] = batch[k].long()
 
             return batch
@@ -220,6 +207,7 @@ class OracleDataset(Dataset):
                     self.data[idx]['target_id'] = target_id
                     self.data[idx]['target_category'] = target_category
                     self.data[idx]['target_bbox'] = target_bbox
+                    self.data[idx]['num_objects'] = len(game['objects'])
 
     def __len__(self):
         return len(self.data)

@@ -14,7 +14,9 @@ def main(args):
 
     ts = datetime.datetime.now().timestamp()
 
-    logger = SummaryWriter('exp/qgen/baseline_{}'.format(ts))
+    logger = SummaryWriter(os.path.join('exp/qgen/',
+                                        '{}_{}'.format(args.exp_name, ts)))
+    logger.add_text('exp_name', args.exp_name)
     logger.add_text('args', str(args))
 
     torch.manual_seed(args.seed)
@@ -46,7 +48,7 @@ def main(args):
     forward_kwargs_mapping = {
         'dialogue': 'source_dialogue',
         'dialogue_lengths': 'dialogue_lengths',
-        'additional_features': 'image_featuers'}
+        'visual_features': 'image_featuers'}
     target_kwarg = 'target_dialogue'
 
     best_val_loss = 1e9
@@ -61,12 +63,13 @@ def main(args):
 
         if valid_loss < best_val_loss:
             best_val_loss = valid_loss
-            model.save()
+            model.save(os.path.join('bin', 'qgen_{}_{}.pt'
+                                           .format(args.exp_name, ts)))
 
         logger.add_scalar('train_loss', train_loss, epoch)
         logger.add_scalar('valid_loss', valid_loss, epoch)
 
-        print(("Epoch {:2d}/{:2d} Train Loss {:06.3f} Vaild Loss {:06.3f}")
+        print(("Epoch {:2d}/{:2d} Train Loss {:07.4f} Vaild Loss {:07.4f}")
               .format(epoch, args.epochs, train_loss, valid_loss))
 
 
@@ -74,11 +77,10 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-s', '--seed', type=int, default=1)
-
     parser.add_argument('-d', '--data-dir', type=str, default='data')
-    parser.add_argument('-c', '--coco-dir', type=str)
+    parser.add_argument('-exp', '--exp-name', type=str, required=True)
 
-    parser.add_argument('-ep', '--epochs', type=int, default=30)
+    parser.add_argument('-ep', '--epochs', type=int, default=15)
     parser.add_argument('-bs', '--batch-size', type=int, default=32)
     parser.add_argument('-lr', '--learning-rate', type=float, default=0.0001)
     parser.add_argument('-mo', '--min-occ', type=int, default=3)

@@ -92,7 +92,7 @@ class QuestionerDataset(Dataset):
                 self.data[idx]['image_featuers'] = image_featuers
                 if cumulative_dialogue:
                     # num_questions +1 to include <sos>
-                    self.data[idx]['num_questions'] = len(game['qas'])
+                    self.data[idx]['num_questions'] = len(game['qas']) + 1
                     self.data[idx]['cumulative_lengths'] = cumulative_lengths
                     self.data[idx]['cumulative_dialogue'] = cumulative_dialogue
 
@@ -157,7 +157,16 @@ class QuestionerDataset(Dataset):
                 if k in ['image', 'image_url']:
                     pass
                 else:
-                    batch[k] = torch.Tensor(batch[k]).to(device)
+                    try:
+                        batch[k] = torch.Tensor(batch[k]).to(device)
+                    except ValueError:
+                        print(k)
+                        print(batch[k])
+                        print(max_dialogue_length)
+                        print(max_num_objects)
+                        print(max_num_questions)
+                        print(max_cumulative_length)
+                        raise
                     if k in ['source_dialogue', 'target_dialogue',
                              'num_questions', 'cumulative_lengths',
                              'dialogue_lengths', 'object_categories',

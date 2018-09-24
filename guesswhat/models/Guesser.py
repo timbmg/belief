@@ -79,6 +79,9 @@ class Guesser(nn.Module):
         # legacy
         if 'setting' not in params:
             params['setting'] = 'baseline'
+        else:
+            if params['setting'] == 'object-only':
+                params['setting'] = 'category-only'
 
         guesser = cls(params['num_embeddings'], params['embedding_dim'],
                       params['num_categories'], params['category_dim'],

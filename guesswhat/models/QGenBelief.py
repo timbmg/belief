@@ -7,26 +7,28 @@ from models import QGen, Guesser
 class QGenBelief(nn.Module):
 
     def __init__(self, qgen, guesser, category_embedding_dim,
-                 use_guesser_cat_emb, object_bow_baseline, train_guesser):
+                 object_emebdding_setting, object_probs_setting,
+                 train_guesser_setting):
 
         super().__init__()
 
         self.qgen = qgen
         self.guesser = guesser
-        self.use_guesser_cat_emb = use_guesser_cat_emb
-        if self.use_guesser_cat_emb:
+        if object_emebdding_setting == 'from-guesser':
             self.relu = nn.ReLU()
             self.linear = nn.Linear(self.guesser.encoder.rnn.hidden_size,
                                     category_embedding_dim)
-        else:
+        elif object_emebdding_setting == 'learn-emb':
             self.category_emb = nn.Embedding(self.guesser.cat.num_embeddings,
                                              category_embedding_dim,
                                              padding_idx=0)
 
         self.tanh = nn.Tanh()
         self.category_embedding_dim = category_embedding_dim
-        self.object_bow_baseline = object_bow_baseline
-        self.train_guesser = train_guesser
+
+        self.object_emebdding_setting = object_emebdding_setting
+        self.object_probs_setting = object_probs_setting
+        self.train_guesser_setting = train_guesser_setting
 
     def get_object_probs(self, dialogue, dialogue_lengths, object_categories,
                          object_bboxes, num_objects):
@@ -42,11 +44,12 @@ class QGenBelief(nn.Module):
         return object_probs
 
     def get_object_emb(self, object_categories, object_bboxes):
-        if self.use_guesser_cat_emb:
-            category_emb = self.guesser.cat(object_categories)
-            object_emb = torch.cat((category_emb, object_bboxes), dim=-1)
-            guesser_emb = self.guesser.mlp(object_emb)
-            if not self.train_guesser:
+        if self.object_emebdding_setting == 'from-guesser':
+            emb = self.guesser.cat(object_categories)
+            if self.guesser.setting == 'baseline':
+                emb = torch.cat((emb, object_bboxes), dim=-1)
+            guesser_emb = self.guesser.mlp(emb)
+            if not self.train_guesser_setting:
                 guesser_emb.detach_()
             object_emb = self.linear(self.relu(guesser_emb))
         else:
@@ -65,7 +68,7 @@ class QGenBelief(nn.Module):
                 cumulative_dialogue, cumulative_lengths, num_questions,
                 object_categories, object_bboxes, num_objects):
 
-        if self.object_bow_baseline:
+        if self.object_probs_setting == 'uniform':
             additional_features = self.get_object_emb(object_categories,
                                                       object_bboxes)
             additional_features = torch.sum(additional_features, dim=1)\
@@ -73,14 +76,13 @@ class QGenBelief(nn.Module):
                 .repeat(1, self.category_embedding_dim).float()
             additional_features = additional_features.unsqueeze(1)\
                 .repeat(1, dialogue.size(1), 1)
-        else:
+        elif self.object_probs_setting in ['guesser-probs', 'guesser-all-categories']:
             batch_size = dialogue.size(0)
             max_que = torch.max(num_questions)  # most q's in a dialogue
             max_dln = torch.max(dialogue_lengths)  # most tokens in a dialogue
             pad_que = len(cumulative_lengths.view(-1))  # total num of q's
-            max_obj = object_categories.size(1)  # most obj's in the batch
 
-            if self.train_guesser:
+            if self.train_guesser_setting:
                 torch.enable_grad()
             else:
                 torch.no_grad()
@@ -93,14 +95,22 @@ class QGenBelief(nn.Module):
             # then filter out any questions which were added for padding
             cumulative_dialogue = cumulative_dialogue\
                 .view(-1, cumulative_dialogue.size(2))[rem_pad]
-
-            # repeat over padding dimension, then filter as above
-            object_categories_repeated = object_categories.unsqueeze(1)\
-                .repeat(1, max_que, 1).view(-1, max_obj)[rem_pad]
-            object_bboxes_repeated = object_bboxes.unsqueeze(1)\
-                .repeat(1, max_que, 1, 1).view(-1, max_obj, 8)[rem_pad]
-            num_objects_repeated = num_objects.unsqueeze(1)\
-                .repeat(1, max_que).view(-1)[rem_pad]
+            if self.object_probs_setting == 'guesser-probs':
+                max_obj = object_categories.size(1)  # most obj's in the batch
+                # repeat over padding dimension, then filter as above
+                object_categories_repeated = object_categories.unsqueeze(1)\
+                    .repeat(1, max_que, 1).view(-1, max_obj)[rem_pad]
+                object_bboxes_repeated = object_bboxes.unsqueeze(1)\
+                    .repeat(1, max_que, 1, 1).view(-1, max_obj, 8)[rem_pad]
+                num_objects_repeated = num_objects.unsqueeze(1)\
+                    .repeat(1, max_que).view(-1)[rem_pad]
+            elif self.object_probs_setting == 'guesser-all-categories':
+                max_obj = self.guesser.cat.num_embeddings
+                object_categories_repeated = None
+                object_bboxes_repeated = None
+                num_objects_repeated = None
+                object_categories = object_categories.new_tensor(
+                    range(max_obj)).unsqueeze(0).repeat(batch_size, 1)
 
             # get object probabilities after each q/a in the dialogue
             object_probs = object_bboxes.new_zeros((pad_que, max_obj))
@@ -110,10 +120,10 @@ class QGenBelief(nn.Module):
                                       object_categories_repeated,
                                       object_bboxes_repeated,
                                       num_objects_repeated)
-            object_probs = object_probs.view(-1, max_que, max_obj)
-            if not self.train_guesser:
+            if not self.train_guesser_setting:
                 object_probs.detach_()
                 torch.enable_grad()
+            object_probs = object_probs.view(-1, max_que, max_obj)
 
             belief_state = self.get_belief_state(object_categories,
                                                  object_bboxes, object_probs)
@@ -121,11 +131,11 @@ class QGenBelief(nn.Module):
             # repeat belief_state over question tokens
             additional_features = visual_features.new_zeros(
                 batch_size, max_dln, self.category_embedding_dim)
-            for qi in range(max_que-1):
-                running = qi < (num_questions-1)
+            for qi in range(max_que - 1):
+                running = qi < (num_questions - 1)
                 from_token = cumulative_lengths.new_zeros(batch_size) \
-                    if qi == 0 else (cumulative_lengths[:, qi]-1)
-                to_token = cumulative_lengths[:, qi+1]-1
+                    if qi == 0 else (cumulative_lengths[:, qi] - 1)
+                to_token = cumulative_lengths[:, qi + 1] - 1
                 for bi in range(batch_size):
                     if running[bi].item() == 0:
                         continue
@@ -177,9 +187,10 @@ class QGenBelief(nn.Module):
         # save belief hyperparameters
         belief_params = dict()
         belief_params['category_embedding_dim'] = self.category_embedding_dim
-        belief_params['use_guesser_cat_emb'] = self.use_guesser_cat_emb
-        belief_params['object_bow_baseline'] = self.object_bow_baseline
-        belief_params['train_guesser'] = self.train_guesser
+        belief_params['object_emebdding_setting'] = \
+            self.self.object_emebdding_setting
+        belief_params['object_probs_setting'] = self.object_probs_setting
+        belief_params['train_guesser_setting'] = self.train_guesser_setting
         params['belief'] = belief_params
 
         # save qgen hyperparameters
@@ -212,18 +223,21 @@ class QGenBelief(nn.Module):
         os.remove('guesser_tmp.pt')
 
         # legacy
-        if 'use_guesser_cat_emb' not in params['belief']:
-            params['belief']['use_guesser_cat_emb'] = False
-        if 'object_bow_baseline' not in params['belief']:
-            params['belief']['object_bow_baseline'] = False
-        if 'train_guesser' not in params['belief']:
-            params['belief']['train_guesser'] = False
+        if 'object_emebdding_setting' not in params['belief']:
+            params['belief']['object_emebdding_setting'] = \
+                params['belief'].get('use_guesser_cat_emb', 'learn-emb')
+        if 'object_probs_setting' not in params['belief']:
+            params['belief']['object_probs_setting'] = \
+                params['belief'].get('object_bow_baseline', 'guesser-probs')
+        if 'train_guesser_setting' not in params['belief']:
+            params['belief']['train_guesser_setting'] = \
+                params['belief'].get('train_guesser', False)
 
         qgen_belief = cls(qgen, guesser,
                           params['belief']['category_embedding_dim'],
-                          params['belief']['use_guesser_cat_emb'],
-                          params['belief']['object_bow_baseline'],
-                          params['belief']['train_guesser'])
+                          params['belief']['object_emebdding_setting'],
+                          params['belief']['object_probs_setting'],
+                          params['belief']['train_guesser_setting'])
         qgen_belief.load_state_dict(params['state_dict'])
         qgen_belief = qgen_belief.to(device)
         print("Guesser and QGen loaded from QGenBelief.")

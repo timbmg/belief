@@ -9,6 +9,8 @@ def eval_epoch(model, data_loader, forward_kwargs_mapping, target_kwarg,
     if optimizer is not None:
         model.train()
         torch.enable_grad()
+        if not isinstance(optimizer, list):
+            optimizer = [optimizer]
     else:
         model.eval()
         torch.no_grad()
@@ -27,9 +29,11 @@ def eval_epoch(model, data_loader, forward_kwargs_mapping, target_kwarg,
         epoch_acc += accuarcy(logits, batch[target_kwarg])
 
         if optimizer is not None:
-            optimizer.zero_grad()
+            for opti in optimizer:
+                opti.zero_grad()
             loss.backward()
-            optimizer.step()
+            for opti in optimizer:
+                opti.step()
 
     return epoch_loss/len(data_loader), epoch_acc/len(data_loader)
 

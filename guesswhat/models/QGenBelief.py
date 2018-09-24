@@ -7,7 +7,7 @@ from models import QGen, Guesser
 class QGenBelief(nn.Module):
 
     def __init__(self, qgen, guesser, category_embedding_dim,
-                 use_guesser_cat_emb, object_bow_baseline):
+                 use_guesser_cat_emb, object_bow_baseline, train_guesser):
 
         super().__init__()
 
@@ -26,6 +26,7 @@ class QGenBelief(nn.Module):
         self.tanh = nn.Tanh()
         self.category_embedding_dim = category_embedding_dim
         self.object_bow_baseline = object_bow_baseline
+        self.train_guesser = train_guesser
 
     def get_object_probs(self, dialogue, dialogue_lengths, object_categories,
                          object_bboxes, num_objects):
@@ -44,8 +45,10 @@ class QGenBelief(nn.Module):
         if self.use_guesser_cat_emb:
             category_emb = self.guesser.cat(object_categories)
             object_emb = torch.cat((category_emb, object_bboxes), dim=-1)
-            object_emb = self.linear(self.relu(
-                self.guesser.mlp(object_emb).detach()))
+            guesser_emb = self.guesser.mlp(object_emb)
+            if not self.train_guesser:
+                guesser_emb.detach_()
+            object_emb = self.linear(self.relu(guesser_emb))
         else:
             object_emb = self.category_emb(object_categories)
 
@@ -77,34 +80,40 @@ class QGenBelief(nn.Module):
             pad_que = len(cumulative_lengths.view(-1))  # total num of q's
             max_obj = object_categories.size(1)  # most obj's in the batch
 
-            with torch.no_grad():
-                # mask to remove q's which only contain pad tokens
-                # note cumulative_lengths is zero padded
-                rem_pad = cumulative_lengths.view(-1) > 0
+            if self.train_guesser:
+                torch.enable_grad()
+            else:
+                torch.no_grad()
 
-                # merge batch and num_questions dimension
-                # then filter out any questions which were added for padding
-                cumulative_dialogue = cumulative_dialogue\
-                    .view(-1, cumulative_dialogue.size(2))[rem_pad]
+            # mask to remove q's which only contain pad tokens
+            # note cumulative_lengths is zero padded
+            rem_pad = cumulative_lengths.view(-1) > 0
 
-                # repeat over padding dimension, then filter as above
-                object_categories_repeated = object_categories.unsqueeze(1)\
-                    .repeat(1, max_que, 1).view(-1, max_obj)[rem_pad]
-                object_bboxes_repeated = object_bboxes.unsqueeze(1)\
-                    .repeat(1, max_que, 1, 1).view(-1, max_obj, 8)[rem_pad]
-                num_objects_repeated = num_objects.unsqueeze(1)\
-                    .repeat(1, max_que).view(-1)[rem_pad]
+            # merge batch and num_questions dimension
+            # then filter out any questions which were added for padding
+            cumulative_dialogue = cumulative_dialogue\
+                .view(-1, cumulative_dialogue.size(2))[rem_pad]
 
-                # get object probabilities after each q/a in the dialogue
-                object_probs = object_bboxes.new_zeros((pad_que, max_obj))
-                object_probs[rem_pad] = \
-                    self.get_object_probs(cumulative_dialogue,
-                                          cumulative_lengths.view(-1)[rem_pad],
-                                          object_categories_repeated,
-                                          object_bboxes_repeated,
-                                          num_objects_repeated)
-                object_probs.detach_()
+            # repeat over padding dimension, then filter as above
+            object_categories_repeated = object_categories.unsqueeze(1)\
+                .repeat(1, max_que, 1).view(-1, max_obj)[rem_pad]
+            object_bboxes_repeated = object_bboxes.unsqueeze(1)\
+                .repeat(1, max_que, 1, 1).view(-1, max_obj, 8)[rem_pad]
+            num_objects_repeated = num_objects.unsqueeze(1)\
+                .repeat(1, max_que).view(-1)[rem_pad]
+
+            # get object probabilities after each q/a in the dialogue
+            object_probs = object_bboxes.new_zeros((pad_que, max_obj))
+            object_probs[rem_pad] = \
+                self.get_object_probs(cumulative_dialogue,
+                                      cumulative_lengths.view(-1)[rem_pad],
+                                      object_categories_repeated,
+                                      object_bboxes_repeated,
+                                      num_objects_repeated)
             object_probs = object_probs.view(-1, max_que, max_obj)
+            if not self.train_guesser:
+                object_probs.detach_()
+                torch.enable_grad()
 
             belief_state = self.get_belief_state(object_categories,
                                                  object_bboxes, object_probs)
@@ -170,6 +179,7 @@ class QGenBelief(nn.Module):
         belief_params['category_embedding_dim'] = self.category_embedding_dim
         belief_params['use_guesser_cat_emb'] = self.use_guesser_cat_emb
         belief_params['object_bow_baseline'] = self.object_bow_baseline
+        belief_params['train_guesser'] = self.train_guesser
         params['belief'] = belief_params
 
         # save qgen hyperparameters
@@ -206,11 +216,14 @@ class QGenBelief(nn.Module):
             params['belief']['use_guesser_cat_emb'] = False
         if 'object_bow_baseline' not in params['belief']:
             params['belief']['object_bow_baseline'] = False
+        if 'train_guesser' not in params['belief']:
+            params['belief']['train_guesser'] = False
 
         qgen_belief = cls(qgen, guesser,
                           params['belief']['category_embedding_dim'],
                           params['belief']['use_guesser_cat_emb'],
-                          params['belief']['object_bow_baseline'])
+                          params['belief']['object_bow_baseline'],
+                          params['belief']['train_guesser'])
         qgen_belief.load_state_dict(params['state_dict'])
         qgen_belief = qgen_belief.to(device)
         print("Guesser and QGen loaded from QGenBelief.")

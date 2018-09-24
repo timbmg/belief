@@ -35,23 +35,27 @@ def main(args):
         file = os.path.join(args.data_dir, 'guesswhat.' + split + '.jsonl.gz')
         data_loader[split] = DataLoader(
             dataset=QuestionerDataset(file, vocab, category_vocab, True,
-                                      unroll_dialogue=True),
+                                      cumulative_dialogue=True),
             batch_size=args.batch_size,
             shuffle=split == 'train',
             collate_fn=QuestionerDataset.get_collate_fn(device))
 
-    guesser = Guesser.load(device)
+    guesser = Guesser.load(device, file=args.guesser_file)
     qgen = QGen(len(vocab), args.word_embedding_dim, args.num_visual_features,
                 args.visual_embedding_dim, args.hidden_size,
                 args.category_embedding_dim).to(device)
     model = QGenBelief(qgen, guesser, args.category_embedding_dim,
                        args.use_guesser_cat_emb,
-                       args.object_bow_baseline).to(device)
+                       args.object_bow_baseline, args.train_guesser).to(device)
     print(model)
     logger.add_text('model', str(model))
 
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=0)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
+    if args.train_guesser:
+        optimizer_guesser = torch.optim.Adam(guesser.parameters(),
+                                             lr=args.learning_rate_guesser)
+        optimizer = [optimizer, optimizer_guesser]
 
     forward_kwargs_mapping = {
         'dialogue': 'source_dialogue',
@@ -93,10 +97,13 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--seed', type=int, default=1)
     parser.add_argument('-d', '--data-dir', type=str, default='data')
     parser.add_argument('-exp', '--exp-name', type=str, required=True)
+    parser.add_argument('-g', '--guesser-file', type=str, default='guesser.pt')
 
     parser.add_argument('-ep', '--epochs', type=int, default=15)
     parser.add_argument('-bs', '--batch-size', type=int, default=32)
     parser.add_argument('-lr', '--learning-rate', type=float, default=0.0001)
+    parser.add_argument('-lrg', '--learning-rate-guesser', type=float,
+                        default=0.00001)
     parser.add_argument('-mo', '--min-occ', type=int, default=3)
 
     parser.add_argument('-we', '--word-embedding-dim', type=int, default=512)
@@ -104,6 +111,7 @@ if __name__ == "__main__":
                         type=int, default=512)
     parser.add_argument('-ge', '--use_guesser_cat_emb', action='store_true')
     parser.add_argument('-obow', '--object_bow_baseline', action='store_true')
+    parser.add_argument('-tg', '--train-guesser', action='store_true')
     parser.add_argument('-nv', '--num-visual-features', type=int, default=1000)
     parser.add_argument('-ve', '--visual-embedding-dim', type=int,
                         default=512)

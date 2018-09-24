@@ -15,7 +15,8 @@ def main(args):
     ts = datetime.datetime.now().timestamp()
 
     logger = SummaryWriter(os.path.join('exp/guesser/',
-                                        '{}_{}'.format(args.exp_name, ts)))
+                                        '{}_{}_{}'.format(args.exp_name,
+                                                          args.setting, ts)))
     logger.add_text('exp_name', args.exp_name)
     logger.add_text('args', str(args))
 
@@ -41,17 +42,25 @@ def main(args):
 
     model = Guesser(len(vocab), args.word_embedding_dim, len(category_vocab),
                     args.category_embedding_dim, args.hidden_size,
-                    args.mlp_hidden).to(device)
+                    args.mlp_hidden, args.setting).to(device)
+    print(model)
 
-    loss_fn = torch.nn.CrossEntropyLoss()
+    class_weight = torch.Tensor(data_loader['train'].dataset.category_weights)\
+        .to(device) if args.weight_loss else None
+    loss_fn = torch.nn.CrossEntropyLoss(weight=class_weight)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
 
     forward_kwargs_mapping = {
         'dialogue': 'source_dialogue',
-        'dialogue_lengths': 'dialogue_lengths',
-        'object_categories': 'object_categories',
-        'object_bboxes': 'object_bboxes'}
-    target_kwarg = 'target_id'
+        'dialogue_lengths': 'dialogue_lengths'}
+
+    if args.setting == 'baseline':
+        forward_kwargs_mapping['object_categories'] = 'object_categories'
+        forward_kwargs_mapping['object_bboxes'] = 'object_bboxes'
+        forward_kwargs_mapping['num_objects'] = 'num_objects'
+        target_kwarg = 'target_id'
+    elif args.setting == 'category-only':
+        target_kwarg = 'target_category'
 
     best_val_acc = 0
 
@@ -66,8 +75,8 @@ def main(args):
 
         if valid_acc > best_val_acc:
             best_val_acc = valid_acc
-            model.save(os.path.join('bin', 'guesser_{}_{}.pt'
-                                    .format(args.exp_name, ts)))
+            model.save(os.path.join('bin', 'guesser_{}_{}_{}.pt'
+                                    .format(args.exp_name, args.setting, ts)))
 
         logger.add_scalar('train_loss', train_loss, epoch)
         logger.add_scalar('valid_loss', valid_loss, epoch)
@@ -77,7 +86,7 @@ def main(args):
         print(("Epoch {:2d}/{:2d} Train Loss {:07.4f} Vaild Loss {:07.4f} " +
                "Train Acc {:07.4f} Vaild Acc {:07.4f}")
               .format(epoch, args.epochs, train_loss, valid_loss,
-                      train_acc*100, valid_acc*100))
+                      train_acc * 100, valid_acc * 100))
 
 
 if __name__ == "__main__":
@@ -86,6 +95,11 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--seed', type=int, default=1)
     parser.add_argument('-d', '--data-dir', type=str, default='data')
     parser.add_argument('-exp', '--exp-name', type=str, required=True)
+
+    parser.add_argument('-set', '--setting',
+                        choices=['baseline', 'category-only'],
+                        default='baseline')
+    parser.add_argument('-wl', '--weight-loss', action='store_true')
 
     parser.add_argument('-ep', '--epochs', type=int, default=20)
     parser.add_argument('-bs', '--batch-size', type=int, default=64)

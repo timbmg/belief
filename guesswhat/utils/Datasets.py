@@ -5,15 +5,15 @@ import json
 import torch
 import numpy as np
 from copy import deepcopy
-from collections import defaultdict
 from torch.utils.data import Dataset
 from nltk.tokenize import TweetTokenizer
+from collections import defaultdict, Counter, OrderedDict
 
 
 class QuestionerDataset(Dataset):
 
     def __init__(self, file, vocab, category_vocab, successful_only,
-                 data_dir='data', unroll_dialogue=False):
+                 data_dir='data', cumulative_dialogue=False):
 
         self.data = defaultdict(dict)
 
@@ -29,6 +29,7 @@ class QuestionerDataset(Dataset):
         self.features = np.asarray(h5py.File(features_file, 'r')['vgg_fc8'])
         self.mapping = json.load(open(mapping_file))
 
+        target_cat_counter = Counter()
         tokenizer = TweetTokenizer(preserve_case=False)
         with gzip.open(file, 'r') as file:
 
@@ -49,10 +50,12 @@ class QuestionerDataset(Dataset):
 
                     if obj['id'] == game['object_id']:
                         target_id = oi
+                target_category = object_categories[target_id]
+                target_cat_counter.update([target_category])
 
                 source_dialogue = [vocab['<sos>']]
                 target_dialogue = list()
-                if unroll_dialogue:
+                if cumulative_dialogue:
                     cumulative_lengths = [1]
                     question_lengths = [1]
                     cumulative_dialogue = [deepcopy(source_dialogue)]
@@ -62,7 +65,7 @@ class QuestionerDataset(Dataset):
                         + vocab.encode_answer(qa['answer'].lower())
                     source_dialogue += qa
 
-                    if unroll_dialogue:
+                    if cumulative_dialogue:
                         cumulative_lengths += [len(source_dialogue)]
                         question_lengths += [len(qa)]
                         cumulative_dialogue.append(deepcopy(source_dialogue))
@@ -82,14 +85,21 @@ class QuestionerDataset(Dataset):
                 self.data[idx]['object_categories'] = object_categories
                 self.data[idx]['object_bboxes'] = object_bboxes
                 self.data[idx]['target_id'] = target_id
+                self.data[idx]['target_category'] = target_category
                 self.data[idx]['num_objects'] = len(object_categories)
                 self.data[idx]['image_url'] = game['image']['flickr_url']
                 self.data[idx]['image'] = image
                 self.data[idx]['image_featuers'] = image_featuers
-                if unroll_dialogue:
-                    self.data[idx]['num_questions'] = len(game['qas']) + 1  # including <sos>
+                if cumulative_dialogue:
+                    # num_questions +1 to include <sos>
+                    self.data[idx]['num_questions'] = len(game['qas'])
                     self.data[idx]['cumulative_lengths'] = cumulative_lengths
                     self.data[idx]['cumulative_dialogue'] = cumulative_dialogue
+
+        target_cat_counter = OrderedDict(sorted(target_cat_counter.items()))
+        # add [0] for padding
+        self.category_weights = [0] + [min(target_cat_counter.values())/cnt
+                                       for cnt in target_cat_counter.values()]
 
     def __len__(self):
         return len(self.data)
@@ -147,17 +157,11 @@ class QuestionerDataset(Dataset):
                 if k in ['image', 'image_url']:
                     pass
                 else:
-                    try:
-                        batch[k] = torch.Tensor(batch[k]).to(device)
-                    except:
-                        print(k)
-                        print(batch[k])
-                        print(max_num_questions)
-                        raise
+                    batch[k] = torch.Tensor(batch[k]).to(device)
                     if k in ['source_dialogue', 'target_dialogue',
                              'num_questions', 'cumulative_lengths',
                              'dialogue_lengths', 'object_categories',
-                             'num_objects', 'target_id',
+                             'num_objects', 'target_id', 'target_category',
                              'cumulative_dialogue']:
                         batch[k] = batch[k].long()
 

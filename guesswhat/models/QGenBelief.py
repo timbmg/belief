@@ -30,6 +30,10 @@ class QGenBelief(nn.Module):
         self.object_probs_setting = object_probs_setting
         self.train_guesser_setting = train_guesser_setting
 
+    @property
+    def hidden_size(self):
+        return self.qgen.encoder.rnn.hidden_size
+
     def get_object_probs(self, dialogue, dialogue_lengths, object_categories,
                          object_bboxes, num_objects):
         object_probs = nn.functional.softmax(
@@ -76,7 +80,8 @@ class QGenBelief(nn.Module):
                 .repeat(1, self.category_embedding_dim).float()
             additional_features = additional_features.unsqueeze(1)\
                 .repeat(1, dialogue.size(1), 1)
-        elif self.object_probs_setting in ['guesser-probs', 'guesser-all-categories']:
+        elif self.object_probs_setting in ['guesser-probs',
+                                           'guesser-all-categories']:
             batch_size = dialogue.size(0)
             max_que = torch.max(num_questions)  # most q's in a dialogue
             max_dln = torch.max(dialogue_lengths)  # most tokens in a dialogue
@@ -154,30 +159,37 @@ class QGenBelief(nn.Module):
 
     def inference(self, input, dialogue, dialogue_lengths, hidden,
                   visual_features, end_of_question_token, object_categories,
-                  object_bboxes, num_objects, strategy='greedy'):
+                  object_bboxes, num_objects, max_tokens=100,
+                  strategy='greedy', return_keys=['generations', 'log_probs', 'hidden_states', 'mask']):
 
         object_probs = \
             self.get_object_probs(dialogue, dialogue_lengths,
                                   object_categories, object_bboxes,
                                   num_objects)
-        object_probs.unsqueeze_(1)
+        object_probs = object_probs.unsqueeze(1)
+        if not self.train_guesser_setting:
+            object_probs = object_probs.detach()
 
         belief_state = self.get_belief_state(object_categories,
                                              object_bboxes, object_probs)
 
-        generations, lengths, h, c = self.qgen.inference(
+        lengths, h, c, return_dict = self.qgen.inference(
             input=input,
             hidden=hidden,
             visual_features=visual_features,
             end_of_question_token=end_of_question_token,
             additional_features=belief_state,
-            strategy=strategy)
+            max_tokens=max_tokens,
+            strategy=strategy,
+            return_keys=return_keys)
 
-        return generations, lengths, h, c
+        return lengths, h, c, return_dict
 
-    def save(self, file='bin/qgen_belief.pt'):
+    def save(self, file='bin/qgen_belief.pt', **kwargs):
 
         params = dict()
+        for k, v in kwargs.items():
+            params[k] = v
 
         # save parameters
         params['state_dict'] = self.state_dict()
@@ -188,7 +200,7 @@ class QGenBelief(nn.Module):
         belief_params = dict()
         belief_params['category_embedding_dim'] = self.category_embedding_dim
         belief_params['object_emebdding_setting'] = \
-            self.self.object_emebdding_setting
+            self.object_emebdding_setting
         belief_params['object_probs_setting'] = self.object_probs_setting
         belief_params['train_guesser_setting'] = self.train_guesser_setting
         params['belief'] = belief_params

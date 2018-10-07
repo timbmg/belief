@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from .Encoder import Encoder
+from collections import defaultdict
 
 
 class QGen(nn.Module):
@@ -25,6 +26,10 @@ class QGen(nn.Module):
                                num_additional_features, hidden_size)
         self.hidden2vocab = nn.Linear(hidden_size, num_embeddings)
 
+    @property
+    def hidden_size(self):
+        return self.encoder.rnn.hidden_size
+
     def forward(self, dialogue, dialogue_lengths, visual_features,
                 additional_features=None, hx=None, flatten_output=True):
 
@@ -48,7 +53,9 @@ class QGen(nn.Module):
             return self.hidden2vocab(outputs)
 
     def inference(self, input, hidden, visual_features, end_of_question_token,
-                  additional_features=None, strategy='greedy'):
+                  additional_features=None, max_tokens=100, strategy='greedy',
+                  return_keys=['generations', 'log_probs', 'hidden_states',
+                               'mask']):
 
         input.squeeze_(1)
         batch_size = input.size(0)
@@ -56,9 +63,9 @@ class QGen(nn.Module):
         running_idx = batch_idx.clone()
 
         if hidden is None:
-            h = input.new_zeros((1, batch_size, self.encoder.rnn.hidden_size))\
+            h = input.new_zeros((1, batch_size, self.hidden_size))\
                 .float()
-            c = input.new_zeros((1, batch_size, self.encoder.rnn.hidden_size))\
+            c = input.new_zeros((1, batch_size, self.hidden_size))\
                 .float()
         else:
             h, c = hidden
@@ -66,9 +73,10 @@ class QGen(nn.Module):
         visual_features = visual_features.unsqueeze(1)
 
         lengths = input.new_zeros((batch_size)).long()
-        generations = list()
+        return_dict = defaultdict(list)
 
-        while True and torch.max(lengths[running_idx]).item() < 100:
+        first_token = True
+        while True and torch.max(lengths[running_idx]).item() < max_tokens:
 
             # QGen forward pass
             input_emb = self.emb(input[running_idx])\
@@ -87,11 +95,18 @@ class QGen(nn.Module):
             logits = self.hidden2vocab(outputs).squeeze(1)  # B x V
 
             # get generated token
+            if first_token:
+                logits[:, 3] = -1e9  # dont sample end of question token
+                first_token = False
             if strategy == 'greedy':
                 input[running_idx] = logits.topk(1)[1].squeeze(1)
+                logp = torch.nn.functional.log_softmax(logits, dim=-1)
+                logp = torch.gather(logp, 1, input[running_idx].unsqueeze(1))
+                logp.unsqueeze_(1)
             elif strategy == 'sampling':
-                probs = nn.functional.softmax(logits, dim=-1)
-                input[running_idx] = probs.multinomial(num_samples=1)
+                d = torch.distributions.Categorical(logits=logits)
+                input[running_idx] = d.sample()
+                logp = d.log_prob(input[running_idx])
             else:
                 raise ValueError("Expected strategy to be 'greedy' or " +
                                  "'sampling' but got {}.".format(strategy))
@@ -102,9 +117,29 @@ class QGen(nn.Module):
                 running_idx = batch_idx.masked_select(m)
 
                 # save generation (excluding eoq tokens)
-                generated_idx = input.new_zeros((batch_size))
-                generated_idx.masked_scatter_(m, input[running_idx])
-                generations.append(generated_idx)
+                if 'generations' in return_keys:
+                    generated_idx = input.new_zeros((batch_size))
+                    generated_idx.masked_scatter_(m, input[running_idx])
+                    return_dict['generations'].append(generated_idx)
+
+                # save log probabilites
+                if 'log_probs' in return_keys:
+                    padded_log_probs = input.new_zeros((batch_size)).float()
+                    padded_log_probs.masked_scatter_(m, logp)
+                    return_dict['log_probs'].append(padded_log_probs)
+
+                # save hidden states
+                if 'hidden_states' in return_keys:
+                    hidden_states = h.new_zeros(
+                        (batch_size, self.hidden_size))
+                    hidden_states.masked_scatter_(
+                        m.unsqueeze(1).repeat(1, self.hidden_size),
+                        h[:, running_idx].squeeze(0))
+                    return_dict['hidden_states'].append(hidden_states)
+
+                # save mask
+                if 'mask' in return_keys:
+                    return_dict['mask'].append(m)
 
                 # update lengths
                 lengths[running_idx] = lengths[running_idx] + 1
@@ -112,18 +147,24 @@ class QGen(nn.Module):
             else:
                 break
 
-        return torch.stack(generations, dim=1), lengths, h, c
+        for key in return_keys:
+            return_dict[key] = torch.stack(return_dict[key], dim=1)
 
-    def save(self, file='bin/qgen.pt'):
+        return lengths, h, c, return_dict
+
+    def save(self, file='bin/qgen.pt', **kwargs):
 
         params = dict()
+        for k, v in kwargs.items():
+            params[k] = v
+
         params['num_embeddings'] = self.emb.num_embeddings
         params['embedding_dim'] = self.emb.embedding_dim
         params['num_visual_features'] = self.visual_emb.in_features\
             if self.visual else 0
         params['visual_embedding_dim'] = self.visual_emb.out_features\
             if self.visual else 0
-        params['hidden_size'] = self.encoder.rnn.hidden_size
+        params['hidden_size'] = self.hidden_size
         params['num_additional_features'] = self.encoder.rnn.input_size \
             - params['visual_embedding_dim'] \
             - params['embedding_dim']

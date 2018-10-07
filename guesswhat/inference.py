@@ -58,12 +58,13 @@ def main(args):
                 belief_kwargs['object_bboxes'] = sample['object_bboxes']
                 belief_kwargs['num_objects'] = sample['num_objects']
 
-            questions, questions_lengths, h, c = qgen.inference(
+            questions_lengths, h, c, return_dict = qgen.inference(
                 input=input,
                 visual_features=visual_features,
                 end_of_question_token=vocab['<eoq>'],
                 hidden=None,
                 strategy=args.strategy,
+                return_keys=['generations'],
                 **belief_kwargs)
 
             for _ in range(1, args.max_num_questions+1):
@@ -72,13 +73,13 @@ def main(args):
                 dialogue = append_to_padded_sequence(
                     padded_sequence=dialogue,
                     sequence_lengths=dialogue_lengths,
-                    appendix=questions,
+                    appendix=return_dict['generations'],
                     appendix_lengths=questions_lengths)
                 dialogue_lengths += questions_lengths
 
                 # get answers
                 answer_logits = oracle.forward(
-                    question=questions,
+                    question=return_dict['generations'],
                     question_lengths=questions_lengths,
                     object_categories=sample['target_category'],
                     object_bboxes=sample['target_bbox']
@@ -100,12 +101,13 @@ def main(args):
                     belief_kwargs['dialogue_lengths'] = dialogue_lengths
 
                 # ask next question
-                questions, questions_lengths, h, c = qgen.inference(
+                questions_lengths, h, c, return_dict = qgen.inference(
                     input=answers,
                     visual_features=visual_features,
                     end_of_question_token=vocab.w2i['<eoq>'],
                     hidden=(h, c),
                     strategy=args.strategy,
+                    return_keys=['generations'],
                     **belief_kwargs)
 
             object_logits = guesser(

@@ -256,18 +256,18 @@ class OracleDataset(Dataset):
         return collate_fn
 
 
-class InferenceDataset(Dataset):
+class InferenceDataset(Dataset):  # TODO refactor
 
-    def __init__(self, file, vocab, category_vocab, data_dir='data'):
+    def __init__(self, file, vocab, category_vocab, data_dir='data',
+                 new_object=False):
         self.data = defaultdict(dict)
-
+        self.new_object = new_object
         features_file = os.path.join(data_dir, 'vgg_fc8.hdf5')
         mapping_file = os.path.join(data_dir, 'imagefile2id.json')
         for f in [features_file, mapping_file]:
             if not os.path.exists(f):
-                raise FileNotFoundError("{} file not found." +
-                                        "Please create with " +
-                                        "utils/cache_visual_features.py"
+                raise FileNotFoundError(("{} file not found. Please create " +
+                                         "with utils/cache_visual_features.py")
                                         .format(features_file))
 
         self.features = np.asarray(h5py.File(features_file, 'r')['vgg_fc8'])
@@ -316,10 +316,23 @@ class InferenceDataset(Dataset):
                 self.data[idx]['image_featuers'] = image_featuers
 
     def __len__(self):
+        #return 128
         return len(self.data)
 
     def __getitem__(self, idx):
-        return self.data[idx]
+        if not self.new_object:
+            return self.data[idx]
+        else:
+            # sample a new object at random from available objects as target
+            data = deepcopy(self.data[idx])
+            random_object_id = np.random.randint(0, data['num_objects'])
+            while random_object_id == data['target_id']:
+                random_object_id = np.random.randint(0, data['num_objects'])
+            data['target_id'] = random_object_id
+            data['target_category'] = \
+                data['object_categories'][data['target_id']]
+            data['target_bbox'] = data['object_bboxes'][data['target_id']]
+            return data
 
     @staticmethod
     def get_collate_fn(device):
@@ -368,16 +381,16 @@ def bb2feature(bbox, im_width, im_height):
     y_center = y_upper + 0.5*y_height
 
     # Rescale features fom -1 to 1
-    x_left = (1.*x_left / im_width) * 2 - 1
-    x_right = (1.*x_right / im_width) * 2 - 1
-    x_center = (1.*x_center / im_width) * 2 - 1
+    x_left = (x_left / im_width) * 2 - 1
+    x_right = (x_right / im_width) * 2 - 1
+    x_center = (x_center / im_width) * 2 - 1
 
-    y_lower = (1.*y_lower / im_height) * 2 - 1
-    y_upper = (1.*y_upper / im_height) * 2 - 1
-    y_center = (1.*y_center / im_height) * 2 - 1
+    y_lower = (y_lower / im_height) * 2 - 1
+    y_upper = (y_upper / im_height) * 2 - 1
+    y_center = (y_center / im_height) * 2 - 1
 
-    x_width = (1.*x_width / im_width) * 2
-    y_height = (1.*y_height / im_height) * 2
+    x_width = (x_width / im_width) * 2
+    y_height = (y_height / im_height) * 2
 
     # Concatenate features
     feat = [x_left, y_upper, x_right, y_lower,

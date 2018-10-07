@@ -32,10 +32,16 @@ def main(args):
 
     data_loader = OrderedDict()
     splits = ['train', 'valid']
+    ds_kwargs = dict()
+    if args.setting == 'mrcnn':
+        ds_kwargs['mrcnn_objects'] = True
+        ds_kwargs['mrcnn_settings'] = \
+            {'filter_category': True, 'skip_below_05': True}
     for split in splits:
         file = os.path.join(args.data_dir, 'guesswhat.' + split + '.jsonl.gz')
         data_loader[split] = DataLoader(
-            dataset=QuestionerDataset(file, vocab, category_vocab, True),
+            dataset=QuestionerDataset(file, vocab, category_vocab, True,
+                                      **ds_kwargs),
             batch_size=args.batch_size,
             shuffle=split == 'train',
             collate_fn=QuestionerDataset.get_collate_fn(device))
@@ -54,16 +60,21 @@ def main(args):
         'dialogue': 'source_dialogue',
         'dialogue_lengths': 'dialogue_lengths'}
 
-    if args.setting == 'baseline':
+    if args.setting in 'baseline':
         forward_kwargs_mapping['object_categories'] = 'object_categories'
         forward_kwargs_mapping['object_bboxes'] = 'object_bboxes'
         forward_kwargs_mapping['num_objects'] = 'num_objects'
         target_kwarg = 'target_id'
     elif args.setting == 'category-only':
         target_kwarg = 'target_category'
+    elif args.setting in 'mrcnn':
+        forward_kwargs_mapping['object_categories'] = 'object_categories'
+        forward_kwargs_mapping['object_bboxes'] = 'object_bboxes'
+        forward_kwargs_mapping['num_objects'] = 'num_objects'
+        forward_kwargs_mapping['visual_features'] = 'mrcnn_visual_features'
+        target_kwarg = 'target_id'
 
     best_val_acc = 0
-
     for epoch in range(args.epochs):
         train_loss, train_acc = eval_epoch(model, data_loader['train'],
                                            forward_kwargs_mapping,
@@ -97,7 +108,7 @@ if __name__ == "__main__":
     parser.add_argument('-exp', '--exp-name', type=str, required=True)
 
     parser.add_argument('-set', '--setting',
-                        choices=['baseline', 'category-only'],
+                        choices=['baseline', 'category-only', 'mrcnn'],
                         default='baseline')
     parser.add_argument('-wl', '--weight-loss', action='store_true')
 

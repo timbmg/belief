@@ -15,10 +15,14 @@ class Guesser(nn.Module):
 
         self.cat = nn.Embedding(num_categories, category_dim)
 
+        spatial_dim = 8
+        visual_dim = 1024
         if setting == 'baseline':
-            input_size = category_dim + 8
+            input_size = category_dim + spatial_dim
         elif setting == 'category-only':
             input_size = category_dim
+        elif setting == 'mrcnn':
+            input_size = category_dim + spatial_dim + visual_dim
 
         self.mlp = nn.Sequential(
             nn.Linear(input_size, mlp_hidden),
@@ -29,20 +33,23 @@ class Guesser(nn.Module):
         self.setting = setting
 
     def forward(self, dialogue, dialogue_lengths, object_categories=None,
-                object_bboxes=None, num_objects=None):
+                object_bboxes=None, num_objects=None, visual_features=None):
 
         word_emb = self.emb(dialogue)
         _, dialogue_emb = self.encoder(word_emb, dialogue_lengths)
 
-        if self.setting == 'category-only':
+        if self.setting in 'baseline':
+            cat_emb = self.cat(object_categories)
+            obj_emb = self.mlp(torch.cat([cat_emb, object_bboxes], dim=-1))
+        elif self.setting == 'category-only':
             # take all categories
             cat_emb = self.cat.weight\
                 .unsqueeze(0).repeat(dialogue.size(0), 1, 1)
             obj_emb = self.mlp(cat_emb)
-        else:
-            # baseline setting
+        if self.setting == 'mrcnn':
             cat_emb = self.cat(object_categories)
-            obj_emb = self.mlp(torch.cat([cat_emb, object_bboxes], dim=-1))
+            obj_emb = self.mlp(
+                torch.cat([cat_emb, object_bboxes, visual_features], dim=-1))
 
         logits = torch.bmm(obj_emb,
                            dialogue_emb[0].permute(1, 2, 0)).squeeze(-1)

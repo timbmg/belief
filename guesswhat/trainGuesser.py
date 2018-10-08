@@ -89,6 +89,17 @@ def main(args):
             model.save(os.path.join('bin', 'guesser_{}_{}_{}.pt'
                                     .format(args.exp_name, args.setting, ts)))
 
+        if args.setting == 'mrcnn':
+            # account for skipped datapoints:  acc * used_data / total_data
+            train_acc = train_acc * len(data_loader['train']) \
+                / (len(data_loader['train'])
+                   + (data_loader['train'].skipped_datapoints
+                      // args.batch_size))
+            valid_acc = valid_acc * len(data_loader['train']) \
+                / (len(data_loader['valid'])
+                   + (data_loader['valid'].skipped_datapoints
+                      // args.batch_size))
+
         logger.add_scalar('train_loss', train_loss, epoch)
         logger.add_scalar('valid_loss', valid_loss, epoch)
         logger.add_scalar('train_acc', train_acc, epoch)

@@ -47,6 +47,8 @@ class QuestionerDataset(Dataset):
             self.mrcnn_category_vocab = \
                 {i: a for a, i in enumerate(mrcnn_classes)}
 
+            self.skipped_datapoints = 0
+
         target_cat_counter = Counter()
         tokenizer = TweetTokenizer(preserve_case=False)
         with gzip.open(file, 'r') as file:
@@ -87,6 +89,7 @@ class QuestionerDataset(Dataset):
 
                     if mrcnn_settings['skip_below_05']:
                         if mrcnn_data['best_iou_val'] < 0.5:
+                            self.skipped_datapoints += 1
                             continue
                     # map mrcnn category back to category vocab
                     for ci, c in enumerate(mrcnn_data['object_categories']):
@@ -211,7 +214,8 @@ class QuestionerDataset(Dataset):
             mrcnn_objects = mrcnn_objects[keep_indices.numpy()]
             soft_categories = soft_categories[keep_indices.numpy()]
 
-            # taking the position of the best bbox in the new (with removed bboxes) matrix
+            # taking the position of the best bbox in the new
+            # (with removed bboxes) matrix
             best = torch.max(best == keep_indices, 0)[1]
 
         if np.sum(cat_match) == 0:
@@ -475,7 +479,8 @@ class InferenceDataset(Dataset):  # TODO refactor
 
                     elif key in ['object_bboxes']:
                         padded.extend(
-                            [[0] * 8] * (max_num_objects - item['num_objects']))
+                            [[0] * 8] * (max_num_objects
+                                         - item['num_objects']))
 
                     batch[key].append(padded)
 

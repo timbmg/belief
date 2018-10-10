@@ -233,7 +233,6 @@ class QuestionerDataset(Dataset):
             'multi_target_mask': iou_above_05.tolist(),
             'multi_target_ious': meta_mrcnn_target_iou.tolist(),
             # 'object_categories_soft': mrcnn_soft_cats.tolist(),
-            #'mrcnn_visual_features': mrcnn_visual_featues.tolist()
             'mrcnn_visual_features': mrcnn_visual_featues
         }
 
@@ -479,7 +478,7 @@ class InferenceDataset(Dataset):  # TODO refactor
                 else:
                     return_data[key] = self.data[idx][key]
 
-            return data
+            return return_data
 
     @staticmethod
     def get_collate_fn(device):

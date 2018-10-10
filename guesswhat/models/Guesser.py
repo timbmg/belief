@@ -49,6 +49,7 @@ class Guesser(nn.Module):
                 .unsqueeze(0).repeat(dialogue.size(0), 1, 1)
             obj_emb = self.mlp(cat_emb)
         elif self.setting == 'mrcnn':
+            cat_emb = self.cat(object_categories)
             vis_emb = self.vis_emb(visual_features)
             obj_emb = self.mlp(torch.cat([cat_emb, object_bboxes, vis_emb],
                                dim=-1))

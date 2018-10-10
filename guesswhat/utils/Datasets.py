@@ -12,6 +12,7 @@ from collections import defaultdict, Counter, OrderedDict
 
 class QuestionerDataset(Dataset):
 
+    @profile
     def __init__(self, file, vocab, category_vocab, successful_only,
                  data_dir='data', cumulative_dialogue=False,
                  mrcnn_objects=False, mrcnn_settings=None):
@@ -37,6 +38,7 @@ class QuestionerDataset(Dataset):
 
             self.mrcnn_bboxes = np.asarray(self.mrcnn_features['boxes'])
             self.mrcnn_cats = np.asarray(self.mrcnn_features['class_probs'])
+            self.mrcnn_box_features = np.asarray(self.mrcnn_features['box_features'])
 
             mrcnn_mappig_file = os.path.join(
                 data_dir, 'mrcnn_imagefile2id.json')
@@ -153,13 +155,15 @@ class QuestionerDataset(Dataset):
     def __getitem__(self, idx):
         return self.data[idx]
 
+    @profile
     def get_mrcnn_data(self, game_image, meta):
         mrcnn_map_id = self.mrcnn_mapping[str(game_image['id'])]
 
         # Read Visual Features
-        mrcnn_visual_featues = np.asarray(
-            self.mrcnn_features["box_features"][mrcnn_map_id]
-            ).reshape(-1, 1024)
+        # mrcnn_visual_featues = np.asarray(
+        #     self.mrcnn_features["box_features"][mrcnn_map_id]
+        #     ).reshape(-1, 1024)
+        mrcnn_visual_featues = self.mrcnn_box_features[mrcnn_map_id].reshape(-1, 1024)
 
         # Read Spatial Features
         mrcnn_game_bboxes = \
@@ -239,6 +243,7 @@ class QuestionerDataset(Dataset):
     @staticmethod
     def get_collate_fn(device):
 
+        @profile
         def collate_fn(data):
 
             max_dialogue_length = max([d['dialogue_lengths'] for d in data])
@@ -282,7 +287,7 @@ class QuestionerDataset(Dataset):
 
                     elif key in ['mrcnn_visual_features']:
                         padded = np.pad(
-                            padded,
+                            item[key],
                             [(0, max_num_objects - item['num_objects']),
                              (0, 0)], mode='constant')
                     else:

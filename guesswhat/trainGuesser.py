@@ -46,12 +46,11 @@ def main(args):
             shuffle=split == 'train',
             collate_fn=QuestionerDataset.get_collate_fn(device))
 
-    if args.setting == 'mrcnn':
-        for split in splits:
+        if args.setting == 'mrcnn':
             logger.add_text("{}_num_datapoints".format(split),
-                            len(data_loader[split].dataset))
+                            str(len(data_loader[split].dataset)))
             logger.add_text("{}_skipped_datapoints".format(split),
-                            data_loader[split].dataset.skipped_datapoints)
+                            str(data_loader[split].dataset.skipped_datapoints))
 
     model = Guesser(len(vocab), args.word_embedding_dim, len(category_vocab),
                     args.category_embedding_dim, args.hidden_size,

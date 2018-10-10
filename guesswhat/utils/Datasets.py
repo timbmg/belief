@@ -233,7 +233,8 @@ class QuestionerDataset(Dataset):
             'multi_target_mask': iou_above_05.tolist(),
             'multi_target_ious': meta_mrcnn_target_iou.tolist(),
             # 'object_categories_soft': mrcnn_soft_cats.tolist(),
-            'mrcnn_visual_features': mrcnn_visual_featues.tolist()
+            #'mrcnn_visual_features': mrcnn_visual_featues.tolist()
+            'mrcnn_visual_features': mrcnn_visual_featues
         }
 
     @staticmethod
@@ -283,9 +284,13 @@ class QuestionerDataset(Dataset):
                                          - item['num_objects']))
 
                     elif key in ['mrcnn_visual_features']:
-                        padded.extend(
-                            [[0] * 1024] * (max_num_objects
-                                            - item['num_objects']))
+                        # padded.extend(
+                        #     [[0] * 1024] * (max_num_objects
+                        #                     - item['num_objects']))
+                        padded = np.pad(
+                            padded,
+                            [(0, max_num_objects - item['num_objects']),
+                             (0, 0)], mode='constant')
 
                     batch[key].append(padded)
 

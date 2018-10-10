@@ -46,6 +46,13 @@ def main(args):
             shuffle=split == 'train',
             collate_fn=QuestionerDataset.get_collate_fn(device))
 
+    if args.setting == 'mrcnn':
+        for split in splits:
+            logger.add_text("{}_num_datapoints".format(split),
+                            len(data_loader[split].dataset))
+            logger.add_text("{}_skipped_datapoints".format(split),
+                            data_loader[split].dataset.skipped_datapoints)
+
     model = Guesser(len(vocab), args.word_embedding_dim, len(category_vocab),
                     args.category_embedding_dim, args.hidden_size,
                     args.mlp_hidden, args.setting).to(device)
@@ -88,17 +95,6 @@ def main(args):
             best_val_acc = valid_acc
             model.save(os.path.join('bin', 'guesser_{}_{}_{}.pt'
                                     .format(args.exp_name, args.setting, ts)))
-
-        if args.setting == 'mrcnn':
-            # account for skipped datapoints:  acc * used_data / total_data
-            train_acc = train_acc * len(data_loader['train']) \
-                / (len(data_loader['train'])
-                   + (data_loader['train'].skipped_datapoints
-                      // args.batch_size))
-            valid_acc = valid_acc * len(data_loader['train']) \
-                / (len(data_loader['valid'])
-                   + (data_loader['valid'].skipped_datapoints
-                      // args.batch_size))
 
         logger.add_scalar('train_loss', train_loss, epoch)
         logger.add_scalar('valid_loss', valid_loss, epoch)

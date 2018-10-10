@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from .Encoder import Encoder
+from .MLP import MLP
 
 
 class Guesser(nn.Module):
@@ -16,13 +17,14 @@ class Guesser(nn.Module):
         self.cat = nn.Embedding(num_categories, category_dim)
 
         spatial_dim = 8
-        visual_dim = 1024
         if setting == 'baseline':
             input_size = category_dim + spatial_dim
         elif setting == 'category-only':
             input_size = category_dim
         elif setting == 'mrcnn':
-            input_size = category_dim + spatial_dim + visual_dim
+            self.vis_emb = MLP(sizes=[1024, 512, 256], activation='relu',
+                               final_activation='relu')
+            input_size = category_dim + spatial_dim + 256
 
         self.mlp = nn.Sequential(
             nn.Linear(input_size, mlp_hidden),
@@ -46,10 +48,10 @@ class Guesser(nn.Module):
             cat_emb = self.cat.weight\
                 .unsqueeze(0).repeat(dialogue.size(0), 1, 1)
             obj_emb = self.mlp(cat_emb)
-        if self.setting == 'mrcnn':
-            cat_emb = self.cat(object_categories)
-            obj_emb = self.mlp(
-                torch.cat([cat_emb, object_bboxes, visual_features], dim=-1))
+        elif self.setting == 'mrcnn':
+            vis_emb = self.vis_emb(visual_features)
+            obj_emb = self.mlp(torch.cat([cat_emb, object_bboxes, vis_emb],
+                               dim=-1))
 
         logits = torch.bmm(obj_emb,
                            dialogue_emb[0].permute(1, 2, 0)).squeeze(-1)
@@ -59,7 +61,7 @@ class Guesser(nn.Module):
             idx = num_objects.new_tensor(range(logits.size(1))).unsqueeze(0)\
                 .repeat(logits.size(0), 1)
             mask = num_objects.unsqueeze(1).repeat(1, logits.size(1)) <= idx
-            logits.masked_fill(mask, float('-1e30'))
+            logits = logits.masked_fill(mask, float('-1e30'))
 
         return logits
 
@@ -84,11 +86,9 @@ class Guesser(nn.Module):
         params = torch.load(file)
 
         # legacy
-        if 'setting' not in params:
-            params['setting'] = 'baseline'
-        else:
-            if params['setting'] == 'object-only':
-                params['setting'] = 'category-only'
+        params['setting'] = params.get('setting', 'baseline')
+        if params['setting'] == 'object-only':
+            params['setting'] = 'category-only'
 
         guesser = cls(params['num_embeddings'], params['embedding_dim'],
                       params['num_categories'], params['category_dim'],

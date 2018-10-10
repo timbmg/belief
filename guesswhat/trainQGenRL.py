@@ -172,34 +172,17 @@ def main(args):
                 rewards = rewards.unsqueeze(1).repeat(1, mask.size(1))
                 rewards *= mask
 
-                # cum_rewards = torch.cumsum(rewards, dim=1)
-                # cum_rewards *= mask
-
                 baseline_preds = baseline(hidden_states.detach_()).squeeze(2)
                 baseline_preds *= mask
-                baseline_loss = baseline_loss_fn(baseline_preds.view(-1),
-                                                 rewards.view(-1)) / batch_size
+                baseline_loss = baseline_loss_fn(
+                    baseline_preds.view(-1), rewards.view(-1)) \
+                    / baseline_preds.size(0)
 
                 log_probs *= mask
                 baseline_preds = baseline_preds.detach()
                 policy_gradient_loss = torch.sum(
-                    -log_probs * (rewards - baseline_preds), dim=1)
-                policy_gradient_loss = torch.mean(policy_gradient_loss)
-
-                # rewards = rewards.masked_select(mask)
-                #
-                # baseline_preds = baseline(hidden_states.detach_()).squeeze(2)
-                # baseline_preds = baseline_preds.masked_select(mask)
-                # baseline_loss = baseline_loss_fn(baseline_preds, rewards)\
-                #     / batch_size
-                #
-                # log_probs = log_probs.masked_select(mask)
-                # policy_gradient_loss = torch.sum(
-                #     log_probs * (rewards - baseline_preds.detach_())) \
-                #     / batch_size
-
-                # print(baseline_loss.item())
-                # print(policy_gradient_loss.item())
+                    log_probs * (rewards - baseline_preds), dim=1)
+                policy_gradient_loss = -torch.mean(policy_gradient_loss)
 
                 if split == 'train':
                     qgen_optimizer.optimize(
@@ -221,17 +204,6 @@ def main(args):
                 logger.add_scalar('{}_pg_loss'.format(split),
                                   policy_gradient_loss.item(),
                                   iteration + len(data_loader[split])*epoch)
-
-                acc = accuarcy(object_logits, sample['target_id'])
-                total_acc += [acc]
-                # if iteration % 10 == 0:
-                #     print(("Iter {:4d} T: {:5.2f} Avg Acc: {:6.3f} " +
-                #            "BL Loss {:6.3f} PG Loss {:6.3f}")
-                #           .format(iteration, time.time()-t1,
-                #                   np.mean(total_acc) * 100,
-                #                   baseline_loss.item(),
-                #                   policy_gradient_loss.item()))
-                #     t1 = time.time()
 
             model_saved = False
             if split == 'valid':
@@ -294,7 +266,7 @@ if __name__ == "__main__":
     parser.add_argument('-mt', '--max_question_tokens', type=int, default=12)
     parser.add_argument('-tstg', '--train-strategy',
                         choices=['greedy', 'sampling'], required=True)
-    parser.add_argument('-vstg', '--eval-strategy',
+    parser.add_argument('-estg', '--eval-strategy',
                         choices=['greedy', 'sampling'], required=True)
     parser.add_argument('-b', '--batch_size', type=int, default=64)
     parser.add_argument('-test', '--test_set', action='store_true')

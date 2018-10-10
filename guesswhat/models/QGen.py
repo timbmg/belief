@@ -130,8 +130,7 @@ class QGen(nn.Module):
 
                 # save hidden states
                 if 'hidden_states' in return_keys:
-                    hidden_states = h.new_zeros(
-                        (batch_size, self.hidden_size))
+                    hidden_states = h.new_zeros((batch_size, self.hidden_size))
                     hidden_states.masked_scatter_(
                         m.unsqueeze(1).repeat(1, self.hidden_size),
                         h[:, running_idx].squeeze(0))

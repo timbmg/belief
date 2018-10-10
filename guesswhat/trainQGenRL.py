@@ -8,7 +8,7 @@ from tensorboardX import SummaryWriter
 from collections import OrderedDict
 from torch.utils.data import DataLoader
 
-from models import QGen, Guesser, Oracle, QGenBelief, MLP
+from models import QGen, Guesser, Oracle, QGenBelief, MLP, GenerationWrapper
 from utils import Vocab, CategoryVocab, InferenceDataset, Optimizer
 from utils.eval import accuarcy
 
@@ -51,6 +51,8 @@ def main(args):
     guesser = Guesser.load(device, file=args.guesser_file)
     oracle = Oracle.load(device, file=args.oracle_file)
 
+    generation_wrapper = GenerationWrapper(qgen, guesser, oracle)
+
     baseline = MLP(
         sizes=[qgen.hidden_size, args.baseline_hidden_size, 1],
         activation='relu', final_activation='relu', bias=[True, False])\
@@ -65,8 +67,6 @@ def main(args):
     split2strat = {'train': args.train_strategy, 'valid': args.eval_strategy,
                    'test': args.eval_strategy}
 
-    belief_kwargs = dict()
-
     best_val_acc = 0
     for epoch in range(args.epochs):
 
@@ -75,92 +75,16 @@ def main(args):
             total_acc = list()
             for iteration, sample in enumerate(data_loader[split]):
 
-                # t1 = time.time()
+                return_dict = generation_wrapper.generate(
+                    sample, vocab, split2strat[split], args.max_num_questions,
+                    device, args.belief_state,
+                    return_keys=['mask', 'object_logits', 'hidden_states',
+                                 'log_probs'])
 
-                batch_size = sample['source_dialogue'].size(0)
-                dialogue = sample['source_dialogue'].clone()
-                dialogue_lengths = dialogue.new_ones(batch_size)
-                visual_features = sample['image_featuers']
-                input = torch.LongTensor(batch_size).fill_(vocab['<sos>'])\
-                    .to(device).unsqueeze(1)
-
-                if args.belief_state:
-                    belief_kwargs['dialogue'] = dialogue
-                    belief_kwargs['dialogue_lengths'] = dialogue_lengths
-                    belief_kwargs['object_categories'] = \
-                        sample['object_categories']
-                    belief_kwargs['object_bboxes'] = sample['object_bboxes']
-                    belief_kwargs['num_objects'] = sample['num_objects']
-
-                questions_lengths, h, c, return_dict = qgen.inference(
-                    input=input,
-                    visual_features=visual_features,
-                    end_of_question_token=vocab['<eoq>'],
-                    hidden=None,
-                    max_tokens=args.max_question_tokens,
-                    strategy=split2strat[split],
-                    **belief_kwargs)
-
-                hidden_states = torch.Tensor().to(device)
-                mask = torch.ByteTensor().to(device)
-                log_probs = torch.Tensor().to(device)
-
-                for _ in range(1, args.max_num_questions+1):
-
-                    # add question to dialogue
-                    dialogue = append_to_padded_sequence(
-                        padded_sequence=dialogue,
-                        sequence_lengths=dialogue_lengths,
-                        appendix=return_dict['generations'],
-                        appendix_lengths=questions_lengths)
-                    dialogue_lengths += questions_lengths
-
-                    # save hidden states
-                    hidden_states = torch.cat(
-                        (hidden_states, return_dict['hidden_states']), dim=1)
-                    mask = torch.cat((mask, return_dict['mask']), dim=1)
-                    log_probs = torch.cat(
-                        (log_probs, return_dict['log_probs']), dim=1)
-
-                    # get answers
-                    answer_logits = oracle.forward(
-                        question=return_dict['generations'],
-                        question_lengths=questions_lengths,
-                        object_categories=sample['target_category'],
-                        object_bboxes=sample['target_bbox']
-                        )
-                    answers = answer_logits.topk(1)[1].long()
-                    answers = answer_class_to_token(answers, vocab.w2i)
-
-                    # add answers to dialogue
-                    dialogue = append_to_padded_sequence(
-                        padded_sequence=dialogue,
-                        sequence_lengths=dialogue_lengths,
-                        appendix=answers,
-                        appendix_lengths=answers.new_ones(answers.size(0)))
-                    dialogue_lengths += 1
-
-                    if args.belief_state:
-                        # update dialogue with new q/a pair
-                        belief_kwargs['dialogue'] = dialogue
-                        belief_kwargs['dialogue_lengths'] = dialogue_lengths
-
-                    # ask next question
-                    questions_lengths, h, c, return_dict = qgen.inference(
-                        input=answers,
-                        visual_features=visual_features,
-                        end_of_question_token=vocab.w2i['<eoq>'],
-                        hidden=(h, c),
-                        max_tokens=args.max_question_tokens,
-                        strategy=split2strat[split],
-                        **belief_kwargs)
-
-                object_logits = guesser(
-                    dialogue=dialogue,
-                    dialogue_lengths=dialogue_lengths,
-                    object_categories=sample['object_categories'],
-                    object_bboxes=sample['object_bboxes'],
-                    num_objects=sample['num_objects'])
+                mask = return_dict['mask']
+                object_logits = return_dict['object_logits']
+                hidden_states = return_dict['hidden_states']
+                log_probs = return_dict['log_probs']
 
                 acc = accuarcy(object_logits,  sample['target_id'])
                 total_acc += [acc]
@@ -221,34 +145,6 @@ def main(args):
                   .format(epoch, split.upper(), np.mean(total_acc)*100,
                           '*' if model_saved else ''))
         print("-"*50)
-
-
-def append_to_padded_sequence(padded_sequence, sequence_lengths, appendix,
-                              appendix_lengths):
-
-    max_length = torch.max(sequence_lengths + appendix_lengths)
-    sequence = padded_sequence.new_zeros((padded_sequence.size(0), max_length))
-
-    for si in range(len(padded_sequence)):
-        new_length = sequence_lengths[si].item() + appendix_lengths[si].item()
-        sequence[si, :new_length] = torch.cat(
-            (padded_sequence[si, :sequence_lengths[si]],
-             appendix[si, :appendix_lengths[si]]))
-
-    return sequence
-
-
-def answer_class_to_token(answers, w2i):
-
-    yes_mask = answers == 0
-    no_mask = answers == 1
-    na_mask = answers == 2
-
-    answers.masked_fill_(yes_mask, w2i['<yes>'])
-    answers.masked_fill_(no_mask, w2i['<no>'])
-    answers.masked_fill_(na_mask, w2i['<n/a>'])
-
-    return answers
 
 
 if __name__ == "__main__":

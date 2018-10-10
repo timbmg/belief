@@ -38,7 +38,8 @@ def main(args):
         ds_kwargs['mrcnn_settings'] = \
             {'filter_category': True, 'skip_below_05': True}
     for split in splits:
-        file = os.path.join(args.data_dir, 'guesswhat.' + split + '.jsonl.gz')
+        file = os.path.join(args.data_dir,
+                            'guesswhat.{}.jsonl.gz'.format(split))
         data_loader[split] = DataLoader(
             dataset=QuestionerDataset(file, vocab, category_vocab, True,
                                       **ds_kwargs),
@@ -47,8 +48,7 @@ def main(args):
             collate_fn=QuestionerDataset.get_collate_fn(device))
 
         if args.setting == 'mrcnn':
-            logger.add_text("{}_num_datapoints".format(split),
-                            str(len(data_loader[split].dataset)))
+            logger.add_text("{}_num_datapoints".format(split), str(len(data_loader[split].dataset)))
             logger.add_text("{}_skipped_datapoints".format(split),
                             str(data_loader[split].dataset.skipped_datapoints))
 

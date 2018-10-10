@@ -12,7 +12,6 @@ from collections import defaultdict, Counter, OrderedDict
 
 class QuestionerDataset(Dataset):
 
-    @profile
     def __init__(self, file, vocab, category_vocab, successful_only,
                  data_dir='data', cumulative_dialogue=False,
                  mrcnn_objects=False, mrcnn_settings=None):
@@ -155,7 +154,6 @@ class QuestionerDataset(Dataset):
     def __getitem__(self, idx):
         return self.data[idx]
 
-    @profile
     def get_mrcnn_data(self, game_image, meta):
         mrcnn_map_id = self.mrcnn_mapping[str(game_image['id'])]
 
@@ -243,7 +241,6 @@ class QuestionerDataset(Dataset):
     @staticmethod
     def get_collate_fn(device):
 
-        @profile
         def collate_fn(data):
 
             max_dialogue_length = max([d['dialogue_lengths'] for d in data])

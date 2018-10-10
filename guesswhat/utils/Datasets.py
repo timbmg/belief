@@ -253,44 +253,41 @@ class QuestionerDataset(Dataset):
             batch = defaultdict(list)
             for item in data:  # TODO: refactor to example
                 for key in data[0].keys():
-                    padded = deepcopy(item[key])
                     if key in ['source_dialogue', 'target_dialogue']:
-                        padded.extend(
-                            [0] * (max_dialogue_length
-                                   - item['dialogue_lengths']))
+                        padded = item[key] + [0] * (max_dialogue_length
+                                                    - item['dialogue_lengths'])
 
                     elif key in ['cumulative_lengths']:
-                        padded.extend(
-                            [0] * (max_num_questions
-                                   - len(item['cumulative_lengths'])))
+                        padded = item[key] \
+                            + [0] * (max_num_questions
+                                     - len(item['cumulative_lengths']))
 
                     elif key in ['cumulative_dialogue']:
+                        padded = list()
                         for i in range(len(padded)):
-                            padded[i].extend([0] * (max_cumulative_length
-                                                    - len(padded[i])))
+                            padded.append(
+                                item[key] + [0] * (max_cumulative_length
+                                                   - len(item[key][i])))
                         # pad dialogue up to max_num_questions
-                        padded.extend(
-                            [[0] * max_cumulative_length]
-                            * (max_num_questions - item['num_questions']))
+                        padded += [[0] * max_cumulative_length] \
+                            * (max_num_questions - item['num_questions'])
 
                     elif key in ['object_categories', 'multi_target_mask',
                                  'multi_target_ious']:
-                        padded.extend(
-                            [0] * (max_num_objects - item['num_objects']))
+                        padded = item[key] + [0] * (max_num_objects
+                                                    - item['num_objects'])
 
                     elif key in ['object_bboxes']:
-                        padded.extend(
-                            [[0] * 8] * (max_num_objects
-                                         - item['num_objects']))
+                        padded = item[key] + [[0] * 8] \
+                            * (max_num_objects - item['num_objects'])
 
                     elif key in ['mrcnn_visual_features']:
-                        # padded.extend(
-                        #     [[0] * 1024] * (max_num_objects
-                        #                     - item['num_objects']))
                         padded = np.pad(
                             padded,
                             [(0, max_num_objects - item['num_objects']),
                              (0, 0)], mode='constant')
+                    else:
+                        padded = item[key]
 
                     batch[key].append(padded)
 
@@ -371,10 +368,11 @@ class OracleDataset(Dataset):
             batch = defaultdict(list)
             for item in data:
                 for key in data[0].keys():
-                    padded = deepcopy(item[key])
                     if key in ['question']:
-                        padded.extend([0] * (max_question_lengths
-                                             - item['question_lengths']))
+                        padded = item[key] + [0] \
+                            * (max_question_lengths - item['question_lengths'])
+                    else:
+                        padded = item[key]
 
                     batch[key].append(padded)
 
@@ -458,14 +456,29 @@ class InferenceDataset(Dataset):  # TODO refactor
             return self.data[idx]
         else:
             # sample a new object at random from available objects as target
-            data = deepcopy(self.data[idx])
-            random_object_id = np.random.randint(0, data['num_objects'])
-            while random_object_id == data['target_id']:
-                random_object_id = np.random.randint(0, data['num_objects'])
-            data['target_id'] = random_object_id
-            data['target_category'] = \
-                data['object_categories'][data['target_id']]
-            data['target_bbox'] = data['object_bboxes'][data['target_id']]
+            # data = deepcopy(self.data[idx])
+            new_object_id = np.random.randint(0, self.data[idx]['num_objects'])
+            while new_object_id == self.data[idx]['target_id']:
+                new_object_id = \
+                    np.random.randint(0, self.data[idx]['num_objects'])
+            # data['target_id'] = new_object_id
+            # data['target_category'] = \
+            #     data['object_categories'][data['target_id']]
+            # data['target_bbox'] = data['object_bboxes'][data['target_id']]
+
+            return_data = dict()
+            for key in self.data[idx].keys():
+                if key == 'target_id':
+                    return_data[key] = new_object_id
+                elif key == 'target_category':
+                    return_data[key] = \
+                        self.data[idx]['object_categories'][new_object_id]
+                elif key == 'target_bbox':
+                    return_data[key] = \
+                        self.data[idx]['object_bboxes'][new_object_id]
+                else:
+                    return_data[key] = self.data[idx][key]
+
             return data
 
     @staticmethod
@@ -477,15 +490,15 @@ class InferenceDataset(Dataset):  # TODO refactor
             batch = defaultdict(list)
             for item in data:  # TODO: refactor to example
                 for key in data[0].keys():
-                    padded = deepcopy(item[key])
                     if key in ['object_categories']:
-                        padded.extend(
-                            [0] * (max_num_objects - item['num_objects']))
+                        padded = item[key] + [0] \
+                            * (max_num_objects - item['num_objects'])
 
                     elif key in ['object_bboxes']:
-                        padded.extend(
-                            [[0] * 8] * (max_num_objects
-                                         - item['num_objects']))
+                        padded = item[key] + [[0] * 8] \
+                             * (max_num_objects - item['num_objects'])
+                    else:
+                        padded = item[key]
 
                     batch[key].append(padded)
 

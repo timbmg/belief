@@ -1,5 +1,6 @@
 import os
 import torch
+import datetime
 import torch.nn as nn
 from models import QGen, Guesser
 
@@ -35,14 +36,16 @@ class QGenBelief(nn.Module):
         return self.qgen.encoder.rnn.hidden_size
 
     def get_object_probs(self, dialogue, dialogue_lengths, object_categories,
-                         object_bboxes, num_objects):
+                         object_bboxes, num_objects,
+                         guesser_visual_features=None):
         object_probs = nn.functional.softmax(
             self.guesser(
                 dialogue=dialogue,
                 dialogue_lengths=dialogue_lengths,
                 object_categories=object_categories,
                 object_bboxes=object_bboxes,
-                num_objects=num_objects),
+                num_objects=num_objects,
+                visual_features=guesser_visual_features),
             dim=-1)
 
         return object_probs
@@ -70,7 +73,8 @@ class QGenBelief(nn.Module):
 
     def forward(self, dialogue, dialogue_lengths, visual_features,
                 cumulative_dialogue, cumulative_lengths, num_questions,
-                object_categories, object_bboxes, num_objects):
+                object_categories, object_bboxes, num_objects,
+                guesser_visual_features=None):
 
         if self.object_probs_setting == 'uniform':
             additional_features = self.get_object_emb(object_categories,
@@ -109,6 +113,12 @@ class QGenBelief(nn.Module):
                     .repeat(1, max_que, 1, 1).view(-1, max_obj, 8)[rem_pad]
                 num_objects_repeated = num_objects.unsqueeze(1)\
                     .repeat(1, max_que).view(-1)[rem_pad]
+                if guesser_visual_features is not None:
+                    guesser_visual_features_repeated = guesser_visual_features\
+                        .unsqueeze(1).repeat(1, max_que, 1, 1)\
+                        .view(-1, max_obj, 1024)[rem_pad]
+                else:
+                    guesser_visual_features_repeated = None
             elif self.object_probs_setting == 'guesser-all-categories':
                 max_obj = self.guesser.cat.num_embeddings
                 object_categories_repeated = None
@@ -124,7 +134,8 @@ class QGenBelief(nn.Module):
                                       cumulative_lengths.view(-1)[rem_pad],
                                       object_categories_repeated,
                                       object_bboxes_repeated,
-                                      num_objects_repeated)
+                                      num_objects_repeated,
+                                      guesser_visual_features_repeated)
             if not self.train_guesser_setting:
                 object_probs.detach_()
                 torch.enable_grad()
@@ -159,13 +170,15 @@ class QGenBelief(nn.Module):
 
     def inference(self, input, dialogue, dialogue_lengths, hidden,
                   visual_features, end_of_question_token, object_categories,
-                  object_bboxes, num_objects, max_tokens=100,
-                  strategy='greedy', return_keys=['generations', 'log_probs', 'hidden_states', 'mask']):
+                  object_bboxes, num_objects, guesser_visual_features=None,
+                  max_tokens=100, strategy='greedy',
+                  return_keys=['generations', 'log_probs', 'hidden_states',
+                               'mask']):
 
         object_probs = \
             self.get_object_probs(dialogue, dialogue_lengths,
                                   object_categories, object_bboxes,
-                                  num_objects)
+                                  num_objects, guesser_visual_features)
         object_probs = object_probs.unsqueeze(1)
         if not self.train_guesser_setting:
             object_probs = object_probs.detach()
@@ -226,13 +239,14 @@ class QGenBelief(nn.Module):
 
         params = torch.load(file)
 
-        torch.save(params['qgen'], 'qgen_tmp.pt')
-        qgen = QGen.load(device, file='qgen_tmp.pt')
-        os.remove('qgen_tmp.pt')
+        ts = datetime.datetime.now().timestamp()
+        torch.save(params['qgen'], 'qgen_tmp_{}.pt'.format(ts))
+        qgen = QGen.load(device, file='qgen_tmp_{}.pt'.format(ts))
+        os.remove('qgen_tmp_{}.pt'.format(ts))
 
-        torch.save(params['guesser'], 'guesser_tmp.pt')
-        guesser = Guesser.load(device, file='guesser_tmp.pt')
-        os.remove('guesser_tmp.pt')
+        torch.save(params['guesser'], 'guesser_tmp_{}.pt'.format(ts))
+        guesser = Guesser.load(device, file='guesser_tmp_{}.pt'.format(ts))
+        os.remove('guesser_tmp_{}.pt'.format(ts))
 
         # legacy
         if 'object_emebdding_setting' not in params['belief']:

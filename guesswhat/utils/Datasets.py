@@ -37,7 +37,8 @@ class QuestionerDataset(Dataset):
 
             self.mrcnn_bboxes = np.asarray(self.mrcnn_features['boxes'])
             self.mrcnn_cats = np.asarray(self.mrcnn_features['class_probs'])
-            self.mrcnn_box_features = np.asarray(self.mrcnn_features['box_features'])
+            self.mrcnn_box_features = \
+                np.asarray(self.mrcnn_features['box_features'])
 
             mrcnn_mappig_file = os.path.join(
                 data_dir, 'mrcnn_imagefile2id.json')
@@ -83,10 +84,12 @@ class QuestionerDataset(Dataset):
                 target_cat_counter.update([target_category])
 
                 if self.mrcnn_objects:
-                    mrcnn_data = self.get_mrcnn_data(
-                        game['image'],
-                        {'target_category': target_category_str,
-                         'target_spatial': target_spatial})
+                    mrcnn_data = get_mrcnn_data(
+                        game['image'], self.mrcnn_mapping,
+                        self.mrcnn_box_features, self.mrcnn_bboxes,
+                        self.mrcnn_cats, self.mrcnn_category_vocab,
+                        target_category_str, target_spatial,
+                        self.filter_category)
 
                     if mrcnn_settings['skip_below_05']:
                         if mrcnn_data['best_iou_val'] < 0.5:
@@ -143,6 +146,9 @@ class QuestionerDataset(Dataset):
                     for k in mrcnn_data.keys():
                         self.data[idx][k] = mrcnn_data[k]
 
+                # if len(self.data) > 100:
+                #     break
+
         target_cat_counter = OrderedDict(sorted(target_cat_counter.items()))
         # add [0] for padding
         self.category_weights = [0] + [min(target_cat_counter.values()) / cnt
@@ -153,90 +159,6 @@ class QuestionerDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.data[idx]
-
-    def get_mrcnn_data(self, game_image, meta):
-        mrcnn_map_id = self.mrcnn_mapping[str(game_image['id'])]
-
-        # Read Visual Features
-        # mrcnn_visual_featues = np.asarray(
-        #     self.mrcnn_features["box_features"][mrcnn_map_id]
-        #     ).reshape(-1, 1024)
-        mrcnn_visual_featues = self.mrcnn_box_features[mrcnn_map_id].reshape(-1, 1024)
-
-        # Read Spatial Features
-        mrcnn_game_bboxes = \
-            np.asarray(self.mrcnn_bboxes[mrcnn_map_id]).reshape(-1, 4)
-        mrcnn_spatials_features = list()
-        for i in range(mrcnn_game_bboxes.shape[0]):
-            # convert from mrcnn (xy top left, xy bottom right)
-            # to (xy top left, wh)
-            bbox = [mrcnn_game_bboxes[i][0], mrcnn_game_bboxes[i][1],
-                    mrcnn_game_bboxes[i][2] - mrcnn_game_bboxes[i][0],
-                    mrcnn_game_bboxes[i][3] - mrcnn_game_bboxes[i][1]]
-
-            mrcnn_spatials_features.append(bb2feature(
-                bbox=bbox,
-                im_width=game_image['width'],
-                im_height=game_image['height']))
-
-        mrcnn_spatials_features = np.asarray(mrcnn_spatials_features)
-
-        # Read Object Categories
-        mrcnn_soft_cats = self.mrcnn_cats[mrcnn_map_id].reshape(-1, 81)
-        mrcnn_obj_cats = np.argmax(mrcnn_soft_cats[:, 1:], 1) + 1
-        num_objects = mrcnn_soft_cats.shape[0]
-
-        # Filter Targets by Category
-        mapped_category = self.mrcnn_category_vocab[meta['target_category']]
-        cat_match = mrcnn_obj_cats == mapped_category
-        if self.filter_category and np.sum(cat_match) > 0:
-            candidate_mask = np.tile(np.expand_dims(cat_match, 1),
-                                     (1, 8)).reshape(-1, 8)
-            mrcnn_target_candidates_spatials = \
-                candidate_mask * mrcnn_spatials_features
-        else:
-            mrcnn_target_candidates_spatials = mrcnn_spatials_features
-
-        # Compute Targets by IOU between meta and mrcnn predictions
-        meta_target_spatial = torch.Tensor(meta['target_spatial'])
-        mrcnn_bbox_predictions = torch.Tensor(mrcnn_target_candidates_spatials)
-        meta_mrcnn_target_iou = compute_iou(
-            predictions=mrcnn_bbox_predictions, target=meta_target_spatial)
-
-        best_iou_val, best_iou_id = torch.max(meta_mrcnn_target_iou, 0)
-        iou_above_05 = meta_mrcnn_target_iou > 0.5
-        """
-        if self.remove_boxes:  # only for when we remove confusing boxes
-            candidate_boxes = (meta_mrcnn_target_iou > 0.5).long()
-            candidate_boxes[best_iou_id] = 0
-            keep_indices = (1 - candidate_boxes).nonzero().squeeze()
-
-            mrcnn_spatials = [a for a in np.array(
-                mrcnn_spatials)[keep_indices.numpy()]]
-            mrcnn_objects = mrcnn_objects[keep_indices.numpy()]
-            soft_categories = soft_categories[keep_indices.numpy()]
-
-            # taking the position of the best bbox in the new
-            # (with removed bboxes) matrix
-            best = torch.max(best == keep_indices, 0)[1]
-
-        if np.sum(cat_match) == 0:
-            best_iou_id = [-1]
-        """
-
-        return {
-            # same keys will overwrite self.data[idx]
-            'target_id': best_iou_id.item(),
-            'object_categories': mrcnn_obj_cats.tolist(),
-            'object_bboxes': mrcnn_spatials_features.tolist(),
-            'num_objects': num_objects,
-
-            'best_iou_val': best_iou_val.item(),
-            'multi_target_mask': iou_above_05.tolist(),
-            'multi_target_ious': meta_mrcnn_target_iou.tolist(),
-            # 'object_categories_soft': mrcnn_soft_cats.tolist(),
-            'mrcnn_visual_features': mrcnn_visual_featues
-        }
 
     @staticmethod
     def get_collate_fn(device):
@@ -265,10 +187,10 @@ class QuestionerDataset(Dataset):
 
                     elif key in ['cumulative_dialogue']:
                         padded = list()
-                        for i in range(len(padded)):
+                        for i in range(len(item[key])):
                             padded.append(
-                                item[key] + [0] * (max_cumulative_length
-                                                   - len(item[key][i])))
+                                item[key][i] + [0] * (max_cumulative_length
+                                                      - len(item[key][i])))
                         # pad dialogue up to max_num_questions
                         padded += [[0] * max_cumulative_length] \
                             * (max_num_questions - item['num_questions'])
@@ -391,8 +313,12 @@ class OracleDataset(Dataset):
 
 class InferenceDataset(Dataset):  # TODO refactor
 
+    # NOTE: DO NOT USE THIS WITH RL AND MRCNN!
+    # when sampling new objects, it is not checked weather mrcnn has
+    # sufficient IOU!
+
     def __init__(self, file, vocab, category_vocab, data_dir='data',
-                 new_object=False):
+                 new_object=False, mrcnn_objects=False, mrcnn_settings=None):
         self.data = defaultdict(dict)
         self.new_object = new_object
         features_file = os.path.join(data_dir, 'vgg_fc8.hdf5')
@@ -406,11 +332,33 @@ class InferenceDataset(Dataset):  # TODO refactor
         self.features = np.asarray(h5py.File(features_file, 'r')['vgg_fc8'])
         self.mapping = json.load(open(mapping_file))
 
+        self.mrcnn_objects = mrcnn_objects
+        if self.mrcnn_objects:
+            mrcnn_features_file = os.path.join(data_dir, 'mrcnn.hdf5')
+            self.mrcnn_features = h5py.File(mrcnn_features_file, 'r')
+
+            self.mrcnn_bboxes = np.asarray(self.mrcnn_features['boxes'])
+            self.mrcnn_cats = np.asarray(self.mrcnn_features['class_probs'])
+            self.mrcnn_box_features = \
+                np.asarray(self.mrcnn_features['box_features'])
+
+            mrcnn_mappig_file = os.path.join(
+                data_dir, 'mrcnn_imagefile2id.json')
+            self.mrcnn_mapping = json.load(open(mrcnn_mappig_file))
+            self.filter_category = mrcnn_settings['filter_category']
+            # self.remove_boxes = mrcnn_settings['remove_boxes']
+
+            self.mrcnn_category_vocab = \
+                {i: a for a, i in enumerate(mrcnn_classes)}
+
+            self.skipped_datapoints = 0
+
         with gzip.open(file, 'r') as file:
 
             for json_game in file:
                 game = json.loads(json_game.decode("utf-8"))
-
+                if game['status'] != 'success':  # NOTE: just checking...
+                    continue
                 source_dialogue = [vocab['<sos>']]
 
                 object_categories = list()
@@ -424,13 +372,28 @@ class InferenceDataset(Dataset):  # TODO refactor
 
                     if obj['id'] == game['object_id']:
                         target_id = oi
-                        target_category = category_vocab[obj['category']]
-                        target_bbox = bb2feature(
+                        target_category_str = obj['category']
+                        target_spatial = bb2feature(
                             bbox=obj['bbox'],
                             im_width=game['image']['width'],
                             im_height=game['image']['height'])
 
-                num_objects = len(object_categories)
+                if self.mrcnn_objects:
+                    mrcnn_data = get_mrcnn_data(
+                        game['image'], self.mrcnn_mapping,
+                        self.mrcnn_box_features, self.mrcnn_bboxes,
+                        self.mrcnn_cats, self.mrcnn_category_vocab,
+                        target_category_str, target_spatial,
+                        self.filter_category)
+
+                    if mrcnn_settings['skip_below_05']:
+                        if mrcnn_data['best_iou_val'] < 0.5:
+                            self.skipped_datapoints += 1
+                            continue
+                    # map mrcnn category back to category vocab
+                    for ci, c in enumerate(mrcnn_data['object_categories']):
+                        mrcnn_data['object_categories'][ci] = \
+                            category_vocab[mrcnn_classes[c]]
 
                 image = game['image']['file_name']
                 image_featuers = self.features[self.mapping[image]]
@@ -439,14 +402,29 @@ class InferenceDataset(Dataset):  # TODO refactor
                 self.data[idx]['source_dialogue'] = source_dialogue
                 self.data[idx]['object_categories'] = object_categories
                 self.data[idx]['object_bboxes'] = object_bboxes
-                self.data[idx]['num_objects'] = num_objects
                 self.data[idx]['target_id'] = target_id
-                self.data[idx]['target_category'] = target_category
-                self.data[idx]['target_bbox'] = target_bbox
-                self.data[idx]['num_objects'] = num_objects
+                self.data[idx]['target_category'] = \
+                    object_categories[target_id]
+                self.data[idx]['target_bbox'] = object_bboxes[target_id]
+                self.data[idx]['num_objects'] = len(object_categories)
                 self.data[idx]['image'] = image
                 self.data[idx]['image_url'] = game['image']['flickr_url']
                 self.data[idx]['image_featuers'] = image_featuers
+                if self.mrcnn_objects:
+                    # save gt object data
+                    self.data[idx]['gt_object_bboxes'] = \
+                        self.data[idx]['object_bboxes']
+                    self.data[idx]['gt_object_categories'] = \
+                        self.data[idx]['object_categories']
+                    self.data[idx]['gt_target_bbox'] = \
+                        self.data[idx]['target_bbox']
+                    self.data[idx]['gt_num_objects'] = \
+                        self.data[idx]['num_objects']
+                    self.data[idx]['gt_target_id'] = \
+                        self.data[idx]['target_id']
+
+                    for k in mrcnn_data.keys():
+                        self.data[idx][k] = mrcnn_data[k]
 
     def __len__(self):
         # return 128
@@ -457,15 +435,10 @@ class InferenceDataset(Dataset):  # TODO refactor
             return self.data[idx]
         else:
             # sample a new object at random from available objects as target
-            # data = deepcopy(self.data[idx])
             new_object_id = np.random.randint(0, self.data[idx]['num_objects'])
             while new_object_id == self.data[idx]['target_id']:
                 new_object_id = \
                     np.random.randint(0, self.data[idx]['num_objects'])
-            # data['target_id'] = new_object_id
-            # data['target_category'] = \
-            #     data['object_categories'][data['target_id']]
-            # data['target_bbox'] = data['object_bboxes'][data['target_id']]
 
             return_data = dict()
             for key in self.data[idx].keys():
@@ -487,17 +460,33 @@ class InferenceDataset(Dataset):  # TODO refactor
 
         def collate_fn(data):
             max_num_objects = max([d['num_objects'] for d in data])
+            max_gt_num_objects = max(d.get('gt_num_objects', 0) for d in data)
 
             batch = defaultdict(list)
             for item in data:  # TODO: refactor to example
                 for key in data[0].keys():
-                    if key in ['object_categories']:
+                    if key in ['object_categories', 'multi_target_mask',
+                               'multi_target_ious']:
                         padded = item[key] + [0] \
                             * (max_num_objects - item['num_objects'])
 
                     elif key in ['object_bboxes']:
                         padded = item[key] + [[0] * 8] \
                              * (max_num_objects - item['num_objects'])
+
+                    elif key in ['mrcnn_visual_features']:
+                        padded = np.pad(
+                            item[key],
+                            [(0, max_num_objects - item['num_objects']),
+                             (0, 0)], mode='constant')
+
+                    elif key in ['gt_object_categories']:
+                        padded = item[key] + [0] \
+                            * (max_gt_num_objects - item['gt_num_objects'])
+
+                    elif key in ['gt_object_bboxes']:
+                        padded = item[key] + [[0] * 8] \
+                            * (max_gt_num_objects - item['gt_num_objects'])
                     else:
                         padded = item[key]
 
@@ -509,7 +498,8 @@ class InferenceDataset(Dataset):  # TODO refactor
                 else:
                     batch[k] = torch.Tensor(batch[k]).to(device)
                     if k in ['source_dialogue', 'object_categories',
-                             'num_objects', 'target_id', 'target_category']:
+                             'num_objects', 'target_id', 'target_category',
+                             'gt_object_categories', 'gt_target_id']:
                         batch[k] = batch[k].long()
 
             return batch
@@ -597,6 +587,89 @@ def compute_iou(predictions, target):
     iou[fail_ys == 1] = 0
 
     return iou
+
+
+def get_mrcnn_data(game_image, mrcnn_mapping, mrcnn_box_features, mrcnn_bboxes,
+                   mrcnn_cats, mrcnn_category_vocab, target_category,
+                   target_spatial, filter_category):
+    mrcnn_map_id = mrcnn_mapping[str(game_image['id'])]
+    mrcnn_visual_featues = mrcnn_box_features[mrcnn_map_id].reshape(-1, 1024)
+
+    # Read Spatial Features
+    # mrcnn_game_bboxes = \
+    #     np.asarray(mrcnn_bboxes[mrcnn_map_id]).reshape(-1, 4)
+    mrcnn_game_bboxes = mrcnn_bboxes[mrcnn_map_id].reshape(-1, 4)
+    mrcnn_spatials_features = list()
+    for i in range(mrcnn_game_bboxes.shape[0]):
+        # convert from mrcnn (xy top left, xy bottom right)
+        # to (xy top left, wh)
+        bbox = [mrcnn_game_bboxes[i][0], mrcnn_game_bboxes[i][1],
+                mrcnn_game_bboxes[i][2] - mrcnn_game_bboxes[i][0],
+                mrcnn_game_bboxes[i][3] - mrcnn_game_bboxes[i][1]]
+
+        mrcnn_spatials_features.append(bb2feature(
+            bbox=bbox,
+            im_width=game_image['width'],
+            im_height=game_image['height']))
+
+    mrcnn_spatials_features = np.asarray(mrcnn_spatials_features)
+
+    # Read Object Categories
+    mrcnn_soft_cats = mrcnn_cats[mrcnn_map_id].reshape(-1, 81)
+    mrcnn_obj_cats = np.argmax(mrcnn_soft_cats[:, 1:], 1) + 1
+    num_objects = mrcnn_soft_cats.shape[0]
+
+    # Filter Targets by Category
+    mapped_category = mrcnn_category_vocab[target_category]
+    cat_match = mrcnn_obj_cats == mapped_category
+    if filter_category and np.sum(cat_match) > 0:
+        candidate_mask = np.tile(np.expand_dims(cat_match, 1),
+                                 (1, 8)).reshape(-1, 8)
+        mrcnn_target_candidates_spatials = \
+            candidate_mask * mrcnn_spatials_features
+    else:
+        mrcnn_target_candidates_spatials = mrcnn_spatials_features
+
+    # Compute Targets by IOU between meta and mrcnn predictions
+    meta_target_spatial = torch.Tensor(target_spatial)
+    mrcnn_bbox_predictions = torch.Tensor(mrcnn_target_candidates_spatials)
+    meta_mrcnn_target_iou = compute_iou(
+        predictions=mrcnn_bbox_predictions, target=meta_target_spatial)
+
+    best_iou_val, best_iou_id = torch.max(meta_mrcnn_target_iou, 0)
+    iou_above_05 = meta_mrcnn_target_iou > 0.5
+    """
+    if self.remove_boxes:  # only for when we remove confusing boxes
+        candidate_boxes = (meta_mrcnn_target_iou > 0.5).long()
+        candidate_boxes[best_iou_id] = 0
+        keep_indices = (1 - candidate_boxes).nonzero().squeeze()
+
+        mrcnn_spatials = [a for a in np.array(
+            mrcnn_spatials)[keep_indices.numpy()]]
+        mrcnn_objects = mrcnn_objects[keep_indices.numpy()]
+        soft_categories = soft_categories[keep_indices.numpy()]
+
+        # taking the position of the best bbox in the new
+        # (with removed bboxes) matrix
+        best = torch.max(best == keep_indices, 0)[1]
+
+    if np.sum(cat_match) == 0:
+        best_iou_id = [-1]
+    """
+
+    return {
+        # same keys will overwrite self.data[idx]
+        'target_id': best_iou_id.item(),
+        'object_categories': mrcnn_obj_cats.tolist(),
+        'object_bboxes': mrcnn_spatials_features.tolist(),
+        'num_objects': num_objects,
+
+        'best_iou_val': best_iou_val.item(),
+        'multi_target_mask': iou_above_05.tolist(),
+        'multi_target_ious': meta_mrcnn_target_iou.tolist(),
+        # 'object_categories_soft': mrcnn_soft_cats.tolist(),
+        'mrcnn_visual_features': mrcnn_visual_featues
+    }
 
 
 mrcnn_classes = [

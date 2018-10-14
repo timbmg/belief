@@ -31,11 +31,16 @@ def main(args):
 
     data_loader = OrderedDict()
     splits = ['train', 'valid']
+    ds_kwargs = dict()
+    if args.mrcnn:
+        ds_kwargs['mrcnn_objects'] = True
+        ds_kwargs['mrcnn_settings'] = \
+            {'filter_category': True, 'skip_below_05': True}
     for split in splits:
         file = os.path.join(args.data_dir, 'guesswhat.' + split + '.jsonl.gz')
         data_loader[split] = DataLoader(
             dataset=QuestionerDataset(file, vocab, category_vocab, True,
-                                      cumulative_dialogue=True),
+                                      cumulative_dialogue=True, **ds_kwargs),
             batch_size=args.batch_size,
             shuffle=split == 'train',
             collate_fn=QuestionerDataset.get_collate_fn(device))
@@ -68,6 +73,9 @@ def main(args):
         'object_categories': 'object_categories',
         'object_bboxes': 'object_bboxes',
         'num_objects': 'num_objects'}
+    if args.mrcnn:
+        forward_kwargs_mapping['guesser_visual_features'] = \
+            'mrcnn_visual_features'
     target_kwarg = 'target_dialogue'
 
     best_val_loss = 1e9
@@ -100,6 +108,7 @@ if __name__ == "__main__":
     parser.add_argument('-exp', '--exp-name', type=str, required=True)
     parser.add_argument('-g', '--guesser-file', type=str,
                         default='bin/guesser.pt')
+    parser.add_argument('-mrcnn', '--mrcnn', action='store_true')
 
     # Hyperparameter
     parser.add_argument('-ep', '--epochs', type=int, default=15)

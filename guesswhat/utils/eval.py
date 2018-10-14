@@ -42,3 +42,13 @@ def accuarcy(logits, targets):
 
     return torch.eq(logits.topk(1)[1].view(-1),
                     targets.view(-1)).sum().item() / targets.size(0)
+
+
+def multi_target_accuracy(logits, targets):
+
+    y = logits.topk(1)[1].view(-1).unsqueeze(1)
+    one_hot_y = logits.new_empty(logits.size()).fill_(0)
+    one_hot_y.scatter_(1, y, 1)
+    one_hot_y = one_hot_y.float()
+
+    return (torch.sum(one_hot_y*targets) / targets.size(0)).item()

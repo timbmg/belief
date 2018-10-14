@@ -13,7 +13,8 @@ class GenerationWrapper():
         return self.generate(*args, **kwargs)
 
     def generate(self, sample, vocab, strategy, max_num_questions,
-                 device, belief_state=False, return_keys=['generations']):
+                 device, belief_state=False, mrcnn_belief=False,
+                 mrcnn_guesser=False, return_keys=['generations']):
 
         batch_size = sample['source_dialogue'].size(0)
         dialogue = sample['source_dialogue'].clone()
@@ -30,6 +31,9 @@ class GenerationWrapper():
                 sample['object_categories']
             belief_kwargs['object_bboxes'] = sample['object_bboxes']
             belief_kwargs['num_objects'] = sample['num_objects']
+        if mrcnn_belief:
+            belief_kwargs['guesser_visual_features'] = \
+                sample['mrcnn_visual_features']
 
         questions_lengths, h, c, return_dict = self.qgen.inference(
             input=input,
@@ -67,7 +71,8 @@ class GenerationWrapper():
                 question=return_dict['generations'],
                 question_lengths=questions_lengths,
                 object_categories=sample['target_category'],
-                object_bboxes=sample['target_bbox']
+                object_bboxes=sample.get('gt_target_bbox',
+                                         sample['target_bbox'])
                 )
             answers = answer_logits.topk(1)[1].long()
             answers = answer_class_to_token(answers, vocab.w2i)
@@ -95,12 +100,20 @@ class GenerationWrapper():
                 return_keys=return_keys,
                 **belief_kwargs)
 
+        if mrcnn_guesser or (not mrcnn_guesser and not mrcnn_belief):
+            object_bboxes = sample['object_bboxes']
+            object_categories = sample['object_categories']
+        elif mrcnn_belief and not mrcnn_guesser:
+            object_bboxes = sample['gt_object_bboxes']
+            object_categories = sample['gt_object_categories']
+
         object_logits = self.guesser(
             dialogue=dialogue,
             dialogue_lengths=dialogue_lengths,
-            object_categories=sample['object_categories'],
-            object_bboxes=sample['object_bboxes'],
-            num_objects=sample['num_objects'])
+            object_categories=object_categories,
+            object_bboxes=object_bboxes,
+            num_objects=sample['num_objects'],
+            visual_features=sample.get('mrcnn_visual_features', None))
 
         return_dict = dict()
         return_dict['dialogue'] = dialogue

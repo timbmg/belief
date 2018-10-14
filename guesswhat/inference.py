@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 
 from models import QGen, Guesser, Oracle, QGenBelief, GenerationWrapper
 from utils import Vocab, CategoryVocab, InferenceDataset
-from utils.eval import accuarcy
+from utils.eval import accuarcy, multi_target_accuracy
 
 
 def main(args):
@@ -21,10 +21,15 @@ def main(args):
     data_loader = OrderedDict()
     splits = (['train'] if args.train_set else list()) + ['valid'] + \
              (['test'] if args.test_set else list())
+    ds_kwargs = dict()
+    if args.mrcnn_belief or args.mrcnn_guesser:
+        ds_kwargs['mrcnn_objects'] = True
+        ds_kwargs['mrcnn_settings'] = \
+            {'filter_category': True, 'skip_below_05': True}
     for split in splits:
         file = os.path.join(args.data_dir, 'guesswhat.' + split + '.jsonl.gz')
         data_loader[split] = DataLoader(
-            dataset=InferenceDataset(file, vocab, category_vocab),
+            dataset=InferenceDataset(file, vocab, category_vocab, **ds_kwargs),
             batch_size=args.batch_size,
             collate_fn=InferenceDataset.get_collate_fn(device))
 
@@ -41,16 +46,44 @@ def main(args):
     for split in splits:
 
         total_acc = list()
+        multi_target_acc = list()
         for iteration, sample in enumerate(data_loader[split]):
             return_dict = generation_wrapper.generate(
                 sample, vocab, args.strategy, args.max_num_questions, device,
-                args.belief_state)
+                args.belief_state, args.mrcnn_belief, args.mrcnn_guesser)
 
-            acc = accuarcy(return_dict['object_logits'], sample['target_id'])
+            if args.mrcnn_belief and not args.mrcnn_guesser:
+                target_id = sample['gt_target_id']
+            else:
+                target_id = sample['target_id']
+
+            acc = accuarcy(return_dict['object_logits'], target_id)
             total_acc += [acc]
-            print(np.mean(total_acc))
+            # print(np.mean(total_acc))
+
+            if args.mrcnn_guesser:
+                multi_target_acc += \
+                    [multi_target_accuracy(return_dict['object_logits'],
+                                           sample['multi_target_mask'])]
 
         print("{} Accuracy {}".format(split.upper(), np.mean(total_acc)))
+
+        if args.mrcnn_guesser:
+            total_acc = np.mean(total_acc) \
+                * len(data_loader[split].dataset) / \
+                (len(data_loader[split].dataset)
+                 + data_loader[split].dataset.skipped_datapoints)
+            print("{} Total Split Accuracy {}"
+                  .format(split.upper(), total_acc))
+
+            print("{} Multi Target Accuracy {}"
+                  .format(split.upper(), np.mean(multi_target_acc)))
+            multi_target_acc = np.mean(multi_target_acc) \
+                * len(data_loader[split].dataset) / \
+                (len(data_loader[split].dataset)
+                 + data_loader[split].dataset.skipped_datapoints)
+            print("{} Multi Target Total Split Accuracy {}"
+                  .format(split.upper(), multi_target_acc))
 
 
 if __name__ == "__main__":
@@ -58,7 +91,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument('-belief', '--belief-state', action='store_true')
-
+    parser.add_argument('-mrcnn-belief', '--mrcnn-belief', action='store_true',
+                        help='Indicates whether the guesser used in the ' +
+                        'QGenBelief is based on mrcnn or not.')
+    parser.add_argument('-mrcnn-guesser', '--mrcnn-guesser',
+                        action='store_true', help='Indicates wheather the ' +
+                        'guesser used for guessing the object at the end of ' +
+                        'the game is based on mrcnn or not.')
     # Dataset Settings
     parser.add_argument('-d', '--data_dir', type=str, default='data')
 

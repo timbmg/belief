@@ -26,6 +26,8 @@ def main(args):
         ds_kwargs['mrcnn_objects'] = True
         ds_kwargs['mrcnn_settings'] = \
             {'filter_category': True, 'skip_below_05': True}
+    if args.spatial_embedding > 0:
+        ds_kwargs['spatial_embedding'] = args.spatial_embedding
     for split in splits:
         file = os.path.join(args.data_dir, 'guesswhat.' + split + '.jsonl.gz')
         data_loader[split] = DataLoader(
@@ -98,6 +100,8 @@ if __name__ == "__main__":
                         action='store_true', help='Indicates wheather the ' +
                         'guesser used for guessing the object at the end of ' +
                         'the game is based on mrcnn or not.')
+    parser.add_argument('-se', '--spatial-embedding', type=int, default=0)
+
     # Dataset Settings
     parser.add_argument('-d', '--data_dir', type=str, default='data')
 

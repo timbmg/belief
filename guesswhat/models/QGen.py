@@ -21,6 +21,7 @@ class QGen(nn.Module):
             self.visual = False
 
         self.add = num_additional_features > 0
+        self.num_additional_features = num_additional_features
 
         self.encoder = Encoder(embedding_dim + visual_embedding_dim +
                                num_additional_features, hidden_size)

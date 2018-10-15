@@ -64,17 +64,26 @@ class QGenBelief(nn.Module):
 
         return object_emb
 
-    def get_belief_state(self, object_categories, object_bboxes,
-                         object_probs):
-        object_emb = self.get_object_emb(object_categories, object_bboxes)
-        belief_state = self.tanh(torch.bmm(object_probs, object_emb))
+    def get_spatial_emb(self, spatial_embedding):
+        if spatial_embedding is not None:
+            spatial_embedding = spatial_embedding.view(
+                spatial_embedding.size(0), spatial_embedding.size(1), -1)
+        return spatial_embedding
 
+
+    def get_belief_state(self, object_categories, object_bboxes,
+                         object_probs, spatial_embedding=None):
+        object_emb = self.get_object_emb(object_categories, object_bboxes)
+        if spatial_embedding is not None:
+            spatial_emb = self.get_spatial_emb(spatial_embedding)
+            object_emb = torch.cat((object_emb, spatial_emb), dim=-1)
+        belief_state = self.tanh(torch.bmm(object_probs, object_emb))
         return belief_state
 
     def forward(self, dialogue, dialogue_lengths, visual_features,
                 cumulative_dialogue, cumulative_lengths, num_questions,
                 object_categories, object_bboxes, num_objects,
-                guesser_visual_features=None):
+                guesser_visual_features=None, spatial_embedding=None):
 
         if self.object_probs_setting == 'uniform':
             additional_features = self.get_object_emb(object_categories,
@@ -142,11 +151,12 @@ class QGenBelief(nn.Module):
             object_probs = object_probs.view(-1, max_que, max_obj)
 
             belief_state = self.get_belief_state(object_categories,
-                                                 object_bboxes, object_probs)
+                                                 object_bboxes, object_probs,
+                                                 spatial_embedding)
 
             # repeat belief_state over question tokens
             additional_features = visual_features.new_zeros(
-                batch_size, max_dln, self.category_embedding_dim)
+                batch_size, max_dln, self.qgen.num_additional_features)
             for qi in range(max_que - 1):
                 running = qi < (num_questions - 1)
                 from_token = cumulative_lengths.new_zeros(batch_size) \
@@ -159,7 +169,7 @@ class QGenBelief(nn.Module):
                     to = to_token[bi].item()
                     additional_features[bi, fr:to] = belief_state[bi, qi]\
                         .unsqueeze(0).repeat(to - fr, 1)\
-                        .view(-1, self.category_embedding_dim)
+                        .view(-1, self.qgen.num_additional_features)
 
         logits = self.qgen(
             dialogue=dialogue,
@@ -171,7 +181,7 @@ class QGenBelief(nn.Module):
     def inference(self, input, dialogue, dialogue_lengths, hidden,
                   visual_features, end_of_question_token, object_categories,
                   object_bboxes, num_objects, guesser_visual_features=None,
-                  max_tokens=100, strategy='greedy',
+                  spatial_embedding=None, max_tokens=100, strategy='greedy',
                   return_keys=['generations', 'log_probs', 'hidden_states',
                                'mask']):
 
@@ -184,7 +194,8 @@ class QGenBelief(nn.Module):
             object_probs = object_probs.detach()
 
         belief_state = self.get_belief_state(object_categories,
-                                             object_bboxes, object_probs)
+                                             object_bboxes, object_probs,
+                                             spatial_embedding)
 
         lengths, h, c, return_dict = self.qgen.inference(
             input=input,

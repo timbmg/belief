@@ -14,7 +14,8 @@ class QuestionerDataset(Dataset):
 
     def __init__(self, file, vocab, category_vocab, successful_only,
                  data_dir='data', cumulative_dialogue=False,
-                 mrcnn_objects=False, mrcnn_settings=None):
+                 mrcnn_objects=False, mrcnn_settings=None,
+                 spatial_embedding=None):
 
         self.data = defaultdict(dict)
 
@@ -63,14 +64,22 @@ class QuestionerDataset(Dataset):
 
                 object_categories = list()
                 object_bboxes = list()
+                object_spatial_embedding = list()
                 for oi, obj in enumerate(game['objects']):
                     if not self.mrcnn_objects:
                         object_categories.append(
                             category_vocab[obj['category']])
-                        object_bboxes.append(bb2feature(
+                        spatial_features = bb2feature(
                             bbox=obj['bbox'],
                             im_width=game['image']['width'],
-                            im_height=game['image']['height']))
+                            im_height=game['image']['height'],
+                            spatial_embedding=spatial_embedding)
+                        if spatial_embedding is None:
+                            object_bboxes.append(spatial_features)
+                        else:
+                            object_bboxes.append(spatial_features[0])
+                            object_spatial_embedding.append(
+                                spatial_features[1])
 
                     if obj['id'] == game['object_id']:
                         target_id = oi
@@ -131,6 +140,7 @@ class QuestionerDataset(Dataset):
                 self.data[idx]['dialogue_lengths'] = len(source_dialogue)
                 self.data[idx]['object_categories'] = object_categories
                 self.data[idx]['object_bboxes'] = object_bboxes
+
                 self.data[idx]['target_id'] = target_id
                 self.data[idx]['target_category'] = target_category
                 self.data[idx]['num_objects'] = len(object_categories)
@@ -142,6 +152,9 @@ class QuestionerDataset(Dataset):
                     self.data[idx]['num_questions'] = len(game['qas']) + 1
                     self.data[idx]['cumulative_lengths'] = cumulative_lengths
                     self.data[idx]['cumulative_dialogue'] = cumulative_dialogue
+                if spatial_embedding is not None:
+                    self.data[idx]['object_spatial_embedding'] = \
+                        object_spatial_embedding
                 if self.mrcnn_objects:
                     for k in mrcnn_data.keys():
                         self.data[idx][k] = mrcnn_data[k]
@@ -153,6 +166,8 @@ class QuestionerDataset(Dataset):
         # add [0] for padding
         self.category_weights = [0] + [min(target_cat_counter.values()) / cnt
                                        for cnt in target_cat_counter.values()]
+
+        self.spatial_embedding = spatial_embedding
 
     def __len__(self):
         return len(self.data)
@@ -172,6 +187,11 @@ class QuestionerDataset(Dataset):
                 # NOTE: this should be the same as max_dialogue_length
                 max_cumulative_length = max([l for d in data
                                              for l in d['cumulative_lengths']])
+
+            if 'object_spatial_embedding' in data[0].keys():
+                # get spatial_embedding dim
+                spatial_embedding = \
+                    len(data[0]['object_spatial_embedding'][0][0])
 
             batch = defaultdict(list)
             for item in data:  # TODO: refactor to example
@@ -209,6 +229,11 @@ class QuestionerDataset(Dataset):
                             item[key],
                             [(0, max_num_objects - item['num_objects']),
                              (0, 0)], mode='constant')
+
+                    elif key in ['object_spatial_embedding']:
+                        padded = item[key] \
+                                 + [[[0] * spatial_embedding] * 2] \
+                                 * (max_num_objects - item['num_objects'])
                     else:
                         padded = item[key]
 
@@ -318,7 +343,8 @@ class InferenceDataset(Dataset):  # TODO refactor
     # sufficient IOU!
 
     def __init__(self, file, vocab, category_vocab, data_dir='data',
-                 new_object=False, mrcnn_objects=False, mrcnn_settings=None):
+                 new_object=False, mrcnn_objects=False, mrcnn_settings=None,
+                 spatial_embedding=None):
         self.data = defaultdict(dict)
         self.new_object = new_object
         features_file = os.path.join(data_dir, 'vgg_fc8.hdf5')
@@ -357,26 +383,30 @@ class InferenceDataset(Dataset):  # TODO refactor
 
             for json_game in file:
                 game = json.loads(json_game.decode("utf-8"))
-                if game['status'] != 'success':  # NOTE: just checking...
-                    continue
+                # if game['status'] != 'success':  # NOTE: just checking...
+                #     continue
                 source_dialogue = [vocab['<sos>']]
 
                 object_categories = list()
                 object_bboxes = list()
+                object_spatial_embedding = list()
                 for oi, obj in enumerate(game['objects']):
                     object_categories.append(category_vocab[obj['category']])
-                    object_bboxes.append(bb2feature(
+                    spatial_features = bb2feature(
                         bbox=obj['bbox'],
                         im_width=game['image']['width'],
-                        im_height=game['image']['height']))
+                        im_height=game['image']['height'],
+                        spatial_embedding=spatial_embedding)
+                    if spatial_embedding is None:
+                        object_bboxes.append(spatial_features)
+                    else:
+                        object_bboxes.append(spatial_features[0])
+                        object_spatial_embedding.append(spatial_features[1])
 
                     if obj['id'] == game['object_id']:
                         target_id = oi
                         target_category_str = obj['category']
-                        target_spatial = bb2feature(
-                            bbox=obj['bbox'],
-                            im_width=game['image']['width'],
-                            im_height=game['image']['height'])
+                        target_spatial = object_bboxes[-1]
 
                 if self.mrcnn_objects:
                     mrcnn_data = get_mrcnn_data(
@@ -384,7 +414,7 @@ class InferenceDataset(Dataset):  # TODO refactor
                         self.mrcnn_box_features, self.mrcnn_bboxes,
                         self.mrcnn_cats, self.mrcnn_category_vocab,
                         target_category_str, target_spatial,
-                        self.filter_category)
+                        self.filter_category, spatial_embedding)
 
                     if mrcnn_settings['skip_below_05']:
                         if mrcnn_data['best_iou_val'] < 0.5:
@@ -402,6 +432,8 @@ class InferenceDataset(Dataset):  # TODO refactor
                 self.data[idx]['source_dialogue'] = source_dialogue
                 self.data[idx]['object_categories'] = object_categories
                 self.data[idx]['object_bboxes'] = object_bboxes
+                self.data[idx]['object_spatial_embedding'] = \
+                    object_spatial_embedding
                 self.data[idx]['target_id'] = target_id
                 self.data[idx]['target_category'] = \
                     object_categories[target_id]
@@ -487,6 +519,12 @@ class InferenceDataset(Dataset):  # TODO refactor
                     elif key in ['gt_object_bboxes']:
                         padded = item[key] + [[0] * 8] \
                             * (max_gt_num_objects - item['gt_num_objects'])
+
+                    elif key in ['object_spatial_embedding']:
+                        padded = item[key] \
+                                 + [[[0] * len(item[key][0][0])] * 2] \
+                                 * (max_num_objects - item['num_objects'])
+
                     else:
                         padded = item[key]
 
@@ -496,7 +534,11 @@ class InferenceDataset(Dataset):  # TODO refactor
                 if k in ['image', 'image_url']:
                     pass
                 else:
-                    batch[k] = torch.Tensor(batch[k]).to(device)
+                    try:
+                        batch[k] = torch.Tensor(batch[k]).to(device)
+                    except:
+                        print(k)
+                        raise
                     if k in ['source_dialogue', 'object_categories',
                              'num_objects', 'target_id', 'target_category',
                              'gt_object_categories', 'gt_target_id']:
@@ -507,7 +549,7 @@ class InferenceDataset(Dataset):  # TODO refactor
         return collate_fn
 
 
-def bb2feature(bbox, im_width, im_height):
+def bb2feature(bbox, im_width, im_height, spatial_embedding=None):
     x_width = bbox[2]
     y_height = bbox[3]
 
@@ -534,8 +576,22 @@ def bb2feature(bbox, im_width, im_height):
     # Concatenate features
     feat = [x_left, y_upper, x_right, y_lower,
             x_center, y_center, x_width, y_height]
+    if spatial_embedding is None:
+        return feat
+    else:
+        x_from = int(bbox[0] / (im_width / spatial_embedding))
+        x_to = int((bbox[0]+bbox[2]) / (im_width / spatial_embedding))
+        x_spatial = [0] * spatial_embedding
+        x_spatial[x_from:x_to] = [1]*(x_to-x_from)
+        assert len(x_spatial) == spatial_embedding, (x_from, x_to)
 
-    return feat
+        y_from = int(bbox[1] / (im_height / spatial_embedding))
+        y_to = int((bbox[1]+bbox[3]) / (im_height / spatial_embedding))
+        y_spatial = [0] * spatial_embedding
+        y_spatial[y_from:y_to] = [1]*(y_to-y_from)
+        assert len(y_spatial) == spatial_embedding, (y_from, y_to)
+
+        return feat, [x_spatial, y_spatial]
 
 
 def compute_iou(predictions, target):
@@ -591,7 +647,7 @@ def compute_iou(predictions, target):
 
 def get_mrcnn_data(game_image, mrcnn_mapping, mrcnn_box_features, mrcnn_bboxes,
                    mrcnn_cats, mrcnn_category_vocab, target_category,
-                   target_spatial, filter_category):
+                   target_spatial, filter_category, spatial_embedding=None):
     mrcnn_map_id = mrcnn_mapping[str(game_image['id'])]
     mrcnn_visual_featues = mrcnn_box_features[mrcnn_map_id].reshape(-1, 1024)
 
@@ -600,6 +656,7 @@ def get_mrcnn_data(game_image, mrcnn_mapping, mrcnn_box_features, mrcnn_bboxes,
     #     np.asarray(mrcnn_bboxes[mrcnn_map_id]).reshape(-1, 4)
     mrcnn_game_bboxes = mrcnn_bboxes[mrcnn_map_id].reshape(-1, 4)
     mrcnn_spatials_features = list()
+    mrcnn_spatial_embedding = list()
     for i in range(mrcnn_game_bboxes.shape[0]):
         # convert from mrcnn (xy top left, xy bottom right)
         # to (xy top left, wh)
@@ -607,10 +664,16 @@ def get_mrcnn_data(game_image, mrcnn_mapping, mrcnn_box_features, mrcnn_bboxes,
                 mrcnn_game_bboxes[i][2] - mrcnn_game_bboxes[i][0],
                 mrcnn_game_bboxes[i][3] - mrcnn_game_bboxes[i][1]]
 
-        mrcnn_spatials_features.append(bb2feature(
+        spatial_features = bb2feature(
             bbox=bbox,
             im_width=game_image['width'],
-            im_height=game_image['height']))
+            im_height=game_image['height'],
+            spatial_embedding=spatial_embedding)
+        if spatial_embedding is None:
+            mrcnn_spatials_features.append(spatial_features)
+        else:
+            mrcnn_spatials_features.append(spatial_features[0])
+            mrcnn_spatial_embedding.append(spatial_features[1])
 
     mrcnn_spatials_features = np.asarray(mrcnn_spatials_features)
 
@@ -663,6 +726,7 @@ def get_mrcnn_data(game_image, mrcnn_mapping, mrcnn_box_features, mrcnn_bboxes,
         'object_categories': mrcnn_obj_cats.tolist(),
         'object_bboxes': mrcnn_spatials_features.tolist(),
         'num_objects': num_objects,
+        'spatial_embedding': mrcnn_spatial_embedding,
 
         'best_iou_val': best_iou_val.item(),
         'multi_target_mask': iou_above_05.tolist(),

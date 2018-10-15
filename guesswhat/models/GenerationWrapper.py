@@ -35,6 +35,9 @@ class GenerationWrapper():
             belief_kwargs['guesser_visual_features'] = \
                 sample['mrcnn_visual_features']
 
+        belief_kwargs['spatial_embedding'] = \
+            sample['object_spatial_embedding']
+
         questions_lengths, h, c, return_dict = self.qgen.inference(
             input=input,
             visual_features=visual_features,

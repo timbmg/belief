@@ -36,6 +36,8 @@ def main(args):
         ds_kwargs['mrcnn_objects'] = True
         ds_kwargs['mrcnn_settings'] = \
             {'filter_category': True, 'skip_below_05': True}
+    if args.spatial_embedding > 0:
+        ds_kwargs['spatial_embedding'] = args.spatial_embedding
     for split in splits:
         file = os.path.join(args.data_dir, 'guesswhat.' + split + '.jsonl.gz')
         data_loader[split] = DataLoader(
@@ -48,7 +50,7 @@ def main(args):
     guesser = Guesser.load(device, file=args.guesser_file)
     qgen = QGen(len(vocab), args.word_embedding_dim, args.num_visual_features,
                 args.visual_embedding_dim, args.hidden_size,
-                args.category_embedding_dim).to(device)
+                args.category_embedding_dim+(args.spatial_embedding*2)).to(device)
     model = QGenBelief(qgen, guesser, args.category_embedding_dim,
                        args.object_embedding_setting,
                        args.object_probs_setting,
@@ -76,6 +78,10 @@ def main(args):
     if args.mrcnn:
         forward_kwargs_mapping['guesser_visual_features'] = \
             'mrcnn_visual_features'
+    if args.spatial_embedding > 0:
+        forward_kwargs_mapping['spatial_embedding'] = \
+            'object_spatial_embedding'
+
     target_kwarg = 'target_dialogue'
 
     best_val_loss = 1e9
@@ -124,6 +130,7 @@ if __name__ == "__main__":
     parser.add_argument('-ve', '--visual-embedding-dim', type=int,
                         default=512)
     parser.add_argument('-hs', '--hidden-size', type=int, default=1024)
+    parser.add_argument('-se', '--spatial-embedding', type=int, default=0)
 
     # Settings
     parser.add_argument('-oe', '--object-embedding-setting',

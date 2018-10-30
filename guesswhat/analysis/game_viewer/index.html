@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+
+<script src="https://d3js.org/d3.v5.min.js"></script>
+
+<style>
+  body {
+    font-family: "Helvetica Neue",Helvetica,Arial,sans-serif;
+  }
+  #container {
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    justify-content: center; /* horizontal alignment */
+    align-items: center; /* vertical alignment */
+    position: relative;
+  }
+  #controls {
+    top: 50px;
+    position: absolute;
+  }
+  #game-wrapper {
+    top: 100px;
+    position: absolute;
+  }
+  #dialogue-wrapper {
+    display: flex;
+    justify-content: center; /* horizontal alignment */
+    align-items: center; /* vertical alignment */
+    padding-bottom: 10px;
+  }
+  .dialogue {
+    padding-top: 10px;
+    padding-left: 10px;
+    padding-right: 10px;
+    text-align: left;
+  }
+  .slider-wrapper {
+    padding-top: 10px;
+    text-align: left;
+  }
+  .radio-wrapper {
+    font-style: italic;
+    font-size: 10pt;
+  }
+  .pageButton {
+    width: 50px;
+  }
+  .svg-invisible {
+    visibility: hidden;
+  }
+  .gray-text {
+    color: gray;
+  }
+</style>
+
+<body>
+  <div id="container">
+    <div id="controls">
+      <input id="filePicker" type="file" multiple>
+      <button id="prevPageBtn" class="pageButton" type="button" disabled><</button>
+      <button id="nextPageBtn" class="pageButton" type="button" disabled>></button>
+    </div>
+  </div>
+
+</body>
+
+<script>
+  var currentPage = 0;
+  var gamesPerPage = 1;
+  var fileNames = [];
+  var loadedFiles = [];
+
+  var siteContainer = d3.select("#container");
+
+  var controls_wrapper = d3.select('#controls');
+  addSlider(controls_wrapper)
+
+  var game_wrapper = siteContainer.append("div")
+    .attr("id", "game-wrapper");
+  // add listener to file picker
+  var inputElement = document.getElementById("filePicker");
+  inputElement.addEventListener("change", loadFiles, false);
+
+  // add listener to next page button
+  var nextPageElement = document.getElementById("nextPageBtn");
+  nextPageElement.addEventListener("click", nextPage, false);
+  var prevPageElement = document.getElementById("prevPageBtn");
+  prevPageElement.addEventListener("click", previousPage, false);
+
+  function loadFiles() {
+    for (var i=0; i<this.files.length; i++) {
+      fileNames.push(this.files[i].name)
+    }
+    Promise.all([
+      d3.json("../"+fileNames[0]),
+      d3.json("../"+fileNames[1])
+    ]).then(function(files) {
+      totalNumGames = Object.keys(files[0]).length;
+      loadedFiles = files;
+      displayGame(0);
+    }).catch(function(err) {
+      // handle error here
+      console.log("Error while loading files.");
+      console.log(err);
+    })
+
+  }
+
+  function displayGame(id) {
+
+    const game_id = Object.keys(loadedFiles[0])[id];
+
+    var dialogue_wrapper = game_wrapper.append('div')
+    .attr('id', 'dialogue-wrapper');
+
+    var image_wrapper = game_wrapper.append('div')
+      .attr('id', 'image-wrapper');
+
+    for (var file_id=0; file_id < loadedFiles.length; file_id ++) {
+      const file_name = fileNames[file_id].replace(/\./g,'');
+      const first = Boolean(file_id == 0)
+      const data = loadedFiles[file_id][game_id];
+
+      var dialogue_div = addDialogue(dialogue_wrapper, file_name, data)
+      addFileRadioButton(dialogue_div, first, file_name)
+
+      if (first) {
+        var svg = displayImage(image_wrapper, data);
+      }
+
+      for (var object_id = 0; object_id < data['bbox'].length; object_id++) {
+
+        const bboxes = data['bbox'];
+        const object_categories = data['object_categories'];
+        const object_probs = data['object_probs'];
+
+        var color = getBboxColor(object_id, data)
+
+        // add bbox, object category and probabilty at the end of the dialogue
+        const group_id = String(file_id) + "-" + String(id) + "-" + String(object_id) ;
+        var g = svg.append("g")
+        .attr("class", 'g-'+file_name)
+        .attr("visibility", first ? "visible" : "hidden");
+        // add bbox
+        addBbox(g, bboxes[object_id], color)
+
+        if (first) {
+          addBboxTextBackground(g, bboxes[object_id], object_categories[object_id])
+        }
+        for (var questionNo = 0; questionNo <= 5; questionNo ++){
+          addBboxText(g, bboxes[object_id], object_categories[object_id],
+            object_probs[questionNo][object_id], questionNo, first);
+          }
+
+       }
+
+    }
+
+    addRadioButtonListener()
+
+    toggleNextPrevButtonEnabled()
+  }
+
+  function displayImage(wrapper, data) {
+    var svg = wrapper.append('svg')
+      .attr("width", data['image_width'])
+      .attr("height", data['image_height']);
+
+    svg.append('defs')
+      .append('filter').attr("x", 0).attr("y", 0).attr("height", 1).attr("id", "solid")
+      .append("feFlood").attr("flood-color", "white")
+      .append("feComposite").attr("in", "SourceGraphic");
+
+    // add background image to svg
+    svg.append('svg:image')
+      .attr('xlink:href', data['image_url']);
+
+    return svg;
+  }
+
+  function getBboxColor(object_id, data) {
+
+    if (object_id == data['target_id']) {
+      var color = "green";
+    } else if ((object_id != data['target_id'] && object_id == data['prediction'])) {
+      var color = "red";
+    } else {
+      var color = "blue"
+    }
+
+    return color;
+  }
+
+  function addBbox(g, bbox, color) {
+    g.append("rect")
+      .attr("x", parseFloat(bbox[0]))
+      .attr("y", parseFloat(bbox[1]))
+      .attr("width", parseFloat(bbox[2]))
+      .attr("height", parseFloat(bbox[3]))
+      .attr("fill", color)
+      .attr("fill-opacity", 0.1)
+      .attr("stroke", color)
+      .attr("stroke-width", 3)
+      .on("click", toggleVisbilityById);
+  }
+
+  function addBboxTextBackground(g, bbox, object_category) {
+    // add background text
+    g.append("text")
+      .attr("x", parseFloat(bbox[0]) + 5)
+      .attr("y", parseFloat(bbox[1]) + 15)
+      .attr("filter", "url(#solid)")
+      .attr('class', 'svg-background-text')
+      .html(object_category + ", " + 'X.XX');
+  }
+
+  function addBboxText(g, bbox, object_category, object_probs, questionNo) {
+    g.append("text")
+    .attr('id', questionNo)
+    .attr("x", parseFloat(bbox[0]) + 5)
+    .attr("y", parseFloat(bbox[1]) + 15)
+    .html(object_category + ", " + parseFloat(object_probs).toFixed(2))
+    // .attr('class', function(d){return questionNo == 5 ? null : 'svg-invisible'});
+    //.attr('class', ((questionNo == 5 && visible)) ? null : 'svg-invisible');
+    .attr('class', (questionNo == 5) ? null : 'svg-invisible');
+  }
+
+  function addDialogue(wrapper, file_name, data) {
+
+    // add dialogue
+    var dialogue_div = wrapper.append('div')
+      .attr('class', 'dialogue');
+
+    // dialogue_div.append('p')
+    //   .attr('class', 'file-name')
+    //   .html("File: " + file_name);
+
+    dialogue_div.append('div')
+      .html(formatDialogue(data['dialogue']));
+
+      return dialogue_div;
+  }
+
+  function formatDialogue(dialogue) {
+    var formattedDialogue = "";
+    var words = dialogue.replace("<sos>", "").split(" ");
+
+    // add </br> after each answer token
+    var i = 0;
+    var id = 0;
+    for (var j = 0; j < words.length; j++) {
+      if (["<yes>", "<no>", "<n/a>"].indexOf(words[j]) != -1) {
+        formattedDialogue = formattedDialogue
+          + "<p id="+id+">"
+          + words.slice(i, j).join(" ")
+          + words[j].replace("<", " &lt;").replace(">", "&gt;")
+          + " </br> </p>" ;
+        id = id + 1;
+        i = j + 1;
+      }
+    }
+
+    return formattedDialogue;
+  }
+
+  function addSlider(wrapper) {
+    var slider_wrapper = wrapper.append('div')
+      .attr('class', 'slider-wrapper')
+
+    slider_wrapper.append('input')
+      .attr('class', 'question-slider')
+      .attr('type', 'range')
+      .attr('min', '0')
+      .attr('max', '5')
+      .attr('step', '1')
+      .attr('value', '5')
+      .attr('list', 'steplist')
+      .on('change', questionSliderOnChange)
+
+    var datalist = slider_wrapper.append('datalist')
+      .attr('class', 'steplist')
+
+    const ticks = [0, 1, 2, 3, 4, 5];
+    for (var j=0; j<ticks.length; j++) {
+      datalist.append('option').attr('value', ticks[j]);
+    }
+  }
+
+  function addFileRadioButton(wrapper, checked, file_name) {
+    var radio_wrapper = wrapper.insert('div', ':first-child')
+      .attr('class', 'radio-wrapper');
+
+    var radio = radio_wrapper.append('input')
+      .attr('id', 'radio-'+file_name)
+      .attr('class', 'radio')
+      .attr('name', 'file-selection')
+      .attr('value', file_name)
+      .attr('type', 'radio')
+
+    if (checked) {
+      document.getElementById('radio-'+file_name).setAttribute('checked', true);
+    }
+
+    radio_wrapper.append('label')
+      .attr('for', 'radio-'+file_name)
+      .html(file_name)
+  }
+
+  function addRadioButtonListener() {
+    d3.selectAll('.radio-wrapper').selectAll('*')
+        .on('click', radioButtonOnClick);
+  }
+
+  function radioButtonOnClick() {
+    d3.select('svg').selectAll('g')
+      .attr('visibility', 'hidden');
+
+    if(typeof this.value !== "undefined") {
+      d3.selectAll('.g-'+this.value)
+        .attr('visibility', 'visible');
+    }
+  }
+
+  function toggleNextPrevButtonEnabled() {
+    if (currentPage <= 1) {
+      document.getElementById("prevPageBtn").disabled = true;
+    } else {
+      document.getElementById("prevPageBtn").disabled = false;
+    }
+    if (currentPage * gamesPerPage >= totalNumGames) {
+      document.getElementById("nextPageBtn").disabled = true;
+    } else {
+      document.getElementById("nextPageBtn").disabled = false;
+    }
+  }
+
+  function toggleVisbilityById(d, i, e) {
+    // var group = this.parentElement;
+    // var currentVisibility = group.getAttribute('visibility');
+    // if (currentVisibility == 'hidden') {
+    //   var setVisibility = 'visible';
+    // } else {
+    //   var setVisibility = 'hidden';
+    // }
+    // group.setAttribute('visibility', setVisibility);
+  }
+
+  function clearPage() {
+    var containerElement = document.getElementById("game-wrapper");
+    while (containerElement.firstChild) {
+      containerElement.removeChild(containerElement.firstChild);
+    }
+  }
+
+  function previousPage() {
+
+    clearPage()
+    currentPage = currentPage - 1;
+    displayGame(currentPage);
+  }
+
+  function nextPage() {
+
+    clearPage()
+    currentPage = currentPage + 1;
+    displayGame(currentPage);
+  }
+
+  function questionSliderOnChange(d, i, e) {
+    const questionNo = e[0].value;
+    // var game_wrapper = document.getElementById('game-wrapper');
+    // var object_wrappers = game_wrapper.getElementsByTagName('svg')[0].getElementsByTagName('g');
+
+    var object_wrappers = d3.selectAll('#game-wrapper svg g text').filter(function() {
+      return !this.classList.contains('svg-background-text')
+    })._groups[0];
+    for (var i=0; i<object_wrappers.length; i++) {
+      if (object_wrappers[i].id == questionNo) {
+        object_wrappers[i].classList.remove('svg-invisible');
+      } else {
+        object_wrappers[i].classList.add('svg-invisible');
+      }
+    }
+
+    var question_wrappers = d3.selectAll('.dialogue').selectAll('p')._groups;
+
+    for (var d=0; d<question_wrappers.length; d++) {
+      for (var i=0; i<question_wrappers[d].length; i++) {
+        if (question_wrappers[d][i].id < questionNo) {
+          question_wrappers[d][i].classList.remove('gray-text');
+        } else {
+          question_wrappers[d][i].classList.add('gray-text');
+        }
+      }
+    }
+  }
+
+</script>

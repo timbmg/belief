@@ -2,7 +2,7 @@ import torch
 
 
 def eval_epoch(model, data_loader, forward_kwargs_mapping, target_kwarg,
-               loss_fn, optimizer=None, logger=None):
+               loss_fn, optimizer=None, logger=None, clip_norm_args=None):
 
     epoch_loss, epoch_acc = 0, 0
 
@@ -33,6 +33,10 @@ def eval_epoch(model, data_loader, forward_kwargs_mapping, target_kwarg,
                 opti.zero_grad()
             loss.backward()
             for opti in optimizer:
+                if clip_norm_args is not None:
+                    for pg in range(len(opti.param_groups)):
+                        torch.nn.utils.clip_grad_norm_(
+                            opti.param_groups[pg]['params'], *clip_norm_args)
                 opti.step()
 
     return epoch_loss/len(data_loader), epoch_acc/len(data_loader)

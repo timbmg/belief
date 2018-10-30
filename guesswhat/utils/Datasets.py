@@ -4,7 +4,9 @@ import h5py
 import json
 import torch
 import numpy as np
+from PIL import Image
 from copy import deepcopy
+from torchvision import transforms
 from torch.utils.data import Dataset
 from nltk.tokenize import TweetTokenizer
 from collections import defaultdict, Counter, OrderedDict
@@ -235,7 +237,8 @@ class QuestionerDataset(Dataset):
 
 class OracleDataset(Dataset):
 
-    def __init__(self, file, vocab, category_vocab, successful_only):
+    def __init__(self, file, vocab, category_vocab, successful_only,
+                 load_crops=False, crops_folder=''):
 
         self.data = defaultdict(dict)
 
@@ -243,6 +246,9 @@ class OracleDataset(Dataset):
             'yes': 0,
             'no': 1,
             'n/a': 2}
+
+        self.load_crops = load_crops
+        self.crops_folder = crops_folder
 
         tokenizer = TweetTokenizer(preserve_case=False)
         with gzip.open(file, 'r') as file:
@@ -268,6 +274,7 @@ class OracleDataset(Dataset):
                     answer = self.answer2class[qa['answer'].lower()]
 
                     idx = len(self.data)
+                    self.data[idx]['game_id'] = game['id']
                     self.data[idx]['question'] = question
                     self.data[idx]['question_lengths'] = len(question)
                     self.data[idx]['target_answer'] = answer
@@ -280,7 +287,26 @@ class OracleDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
+
+        if self.load_crops and 'crop' not in self.data[idx]:
+            crop_path = os.path.join(
+                self.crops_folder, str(self.data[idx]['game_id']) + '.jpg')
+            norm_crop = self.normalize_imagenet(crop_path)
+            self.data[idx]['crop'] = norm_crop
+
         return self.data[idx]
+
+    @staticmethod
+    def normalize_imagenet(image_path):
+
+        transform = transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406),
+                                 (0.229, 0.224, 0.225))])
+
+        return transform(Image.open(image_path).convert('RGB'))
 
     @staticmethod
     def get_collate_fn(device):
@@ -300,7 +326,10 @@ class OracleDataset(Dataset):
                     batch[key].append(padded)
 
             for k in batch.keys():
-                batch[k] = torch.Tensor(batch[k]).to(device)
+                if k == 'crop':
+                    batch[k] = torch.stack(batch[k], dim=0).to(device)
+                else:
+                    batch[k] = torch.Tensor(batch[k]).to(device)
                 if k in ['question', 'question_lengths',
                          'target_answer', 'target_id',
                          'target_category']:
@@ -363,7 +392,9 @@ class InferenceDataset(Dataset):  # TODO refactor
 
                 object_categories = list()
                 object_bboxes = list()
+                orignal_bboxes = list()
                 for oi, obj in enumerate(game['objects']):
+                    orignal_bboxes.append(obj['bbox'])
                     object_categories.append(category_vocab[obj['category']])
                     object_bboxes.append(bb2feature(
                         bbox=obj['bbox'],
@@ -399,15 +430,19 @@ class InferenceDataset(Dataset):  # TODO refactor
                 image_featuers = self.features[self.mapping[image]]
 
                 idx = len(self.data)
+                self.data[idx]['game_id'] = game['id']
                 self.data[idx]['source_dialogue'] = source_dialogue
                 self.data[idx]['object_categories'] = object_categories
                 self.data[idx]['object_bboxes'] = object_bboxes
+                self.data[idx]['orignal_bboxes'] = orignal_bboxes
                 self.data[idx]['target_id'] = target_id
                 self.data[idx]['target_category'] = \
                     object_categories[target_id]
                 self.data[idx]['target_bbox'] = object_bboxes[target_id]
                 self.data[idx]['num_objects'] = len(object_categories)
                 self.data[idx]['image'] = image
+                self.data[idx]['image_width'] = game['image']['width']
+                self.data[idx]['image_height'] = game['image']['height']
                 self.data[idx]['image_url'] = game['image']['flickr_url']
                 self.data[idx]['image_featuers'] = image_featuers
                 if self.mrcnn_objects:
@@ -461,6 +496,8 @@ class InferenceDataset(Dataset):  # TODO refactor
         def collate_fn(data):
             max_num_objects = max([d['num_objects'] for d in data])
             max_gt_num_objects = max(d.get('gt_num_objects', 0) for d in data)
+            if max_gt_num_objects == 0:
+                max_gt_num_objects = max_num_objects
 
             batch = defaultdict(list)
             for item in data:  # TODO: refactor to example
@@ -487,6 +524,10 @@ class InferenceDataset(Dataset):  # TODO refactor
                     elif key in ['gt_object_bboxes']:
                         padded = item[key] + [[0] * 8] \
                             * (max_gt_num_objects - item['gt_num_objects'])
+
+                    elif key in ['orignal_bboxes']:
+                        padded = item[key] + [[0] * 4] \
+                            * (max_num_objects - len(item[key]))
                     else:
                         padded = item[key]
 
@@ -496,10 +537,15 @@ class InferenceDataset(Dataset):  # TODO refactor
                 if k in ['image', 'image_url']:
                     pass
                 else:
-                    batch[k] = torch.Tensor(batch[k]).to(device)
+                    try:
+                        batch[k] = torch.Tensor(batch[k]).to(device)
+                    except:
+                        print(k)
+                        raise
                     if k in ['source_dialogue', 'object_categories',
                              'num_objects', 'target_id', 'target_category',
-                             'gt_object_categories', 'gt_target_id']:
+                             'gt_object_categories', 'gt_target_id',
+                             'game_id']:
                         batch[k] = batch[k].long()
 
             return batch

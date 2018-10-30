@@ -6,30 +6,40 @@ from .Encoder import Encoder
 class Oracle(nn.Module):
 
     def __init__(self, num_embeddings, embedding_dim, num_categories,
-                 category_dim, hidden_size, mlp_hidden):
+                 category_dim, hidden_size, mlp_hidden, filmwrapper=None):
 
         super().__init__()
 
         self.emb = nn.Embedding(num_embeddings, embedding_dim)
-        self.encoder = Encoder(embedding_dim, hidden_size)
-
         self.cat = nn.Embedding(num_categories, category_dim)
+        self.encoder = Encoder(embedding_dim, hidden_size)
+        self.filmwrapper = filmwrapper
+
+        mlp_in_features = hidden_size+category_dim+8
+        if filmwrapper is not None:
+            mlp_in_features += filmwrapper.out_features
+
         self.mlp = nn.Sequential(
-            nn.Linear(hidden_size+category_dim+8, mlp_hidden),
+            nn.Linear(mlp_in_features, mlp_hidden),
             nn.ReLU(),
             nn.Linear(mlp_hidden, 3)
         )
 
-    def forward(self, question, question_lengths,
-                object_categories, object_bboxes):
+    def forward(self, question, question_lengths, object_categories,
+                object_bboxes, crop=None):
 
         word_emb = self.emb(question)
-        _, dialogue_emb = self.encoder(word_emb, question_lengths)
+        dialogue_emb = self.encoder(
+            word_emb, question_lengths)[1][0].squeeze(0)
 
         cat_emb = self.cat(object_categories)
-        logits = self.mlp(torch.cat([dialogue_emb[0].squeeze(0),
-                                     cat_emb,
-                                     object_bboxes], dim=-1))
+        mlp_input = torch.cat([dialogue_emb, cat_emb, object_bboxes], dim=-1)
+
+        if self.filmwrapper is not None:
+            image_embedding = self.filmwrapper(crop, dialogue_emb)
+            mlp_input = torch.cat([mlp_input, image_embedding], dim=-1)
+
+        logits = self.mlp(mlp_input)
 
         return logits
 

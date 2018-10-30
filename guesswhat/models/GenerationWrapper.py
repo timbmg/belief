@@ -35,6 +35,13 @@ class GenerationWrapper():
             belief_kwargs['guesser_visual_features'] = \
                 sample['mrcnn_visual_features']
 
+        if mrcnn_guesser or (not mrcnn_guesser and not mrcnn_belief):
+            object_bboxes = sample['object_bboxes']
+            object_categories = sample['object_categories']
+        elif mrcnn_belief and not mrcnn_guesser:
+            object_bboxes = sample['gt_object_bboxes']
+            object_categories = sample['gt_object_categories']
+
         questions_lengths, h, c, return_dict = self.qgen.inference(
             input=input,
             visual_features=visual_features,
@@ -47,8 +54,21 @@ class GenerationWrapper():
         hidden_states = torch.Tensor().to(device)
         mask = torch.ByteTensor().to(device)
         log_probs = torch.Tensor().to(device)
+        object_probs = torch.Tensor().to(device)
 
-        for _ in range(1, max_num_questions+1):
+        if self.qgen.__class__.__name__ == 'QGen':
+            object_probs = torch.nn.functional.softmax(
+                self.guesser(
+                    dialogue=dialogue,
+                    dialogue_lengths=dialogue_lengths,
+                    object_categories=object_categories,
+                    object_bboxes=object_bboxes,
+                    num_objects=sample['num_objects'],
+                    visual_features=sample.get('mrcnn_visual_features',
+                                               None)),
+                dim=-1).unsqueeze(1)
+
+        for qi in range(1, max_num_questions+1):
 
             # add question to dialogue
             dialogue = append_to_padded_sequence(
@@ -66,6 +86,7 @@ class GenerationWrapper():
             if 'log_probs' in return_keys:
                 log_probs = torch.cat(
                     (log_probs, return_dict['log_probs']), dim=1)
+
             # get answers
             answer_logits = self.oracle.forward(
                 question=return_dict['generations'],
@@ -85,6 +106,24 @@ class GenerationWrapper():
                 appendix_lengths=answers.new_ones(answers.size(0)))
             dialogue_lengths += 1
 
+            if qi == max_num_questions:
+                break
+
+            if 'object_probs' in return_keys:
+                if self.qgen.__class__.__name__ == 'QGen':
+                    return_dict['object_probs'] = torch.nn.functional.softmax(
+                        self.guesser(
+                            dialogue=dialogue,
+                            dialogue_lengths=dialogue_lengths,
+                            object_categories=object_categories,
+                            object_bboxes=object_bboxes,
+                            num_objects=sample['num_objects'],
+                            visual_features=sample.get('mrcnn_visual_features',
+                                                       None)),
+                        dim=-1).unsqueeze(1)
+                object_probs = torch.cat(
+                    (object_probs, return_dict['object_probs']), dim=1)
+
             if belief_state:
                 # update dialogue with new q/a pair
                 belief_kwargs['dialogue'] = dialogue
@@ -99,13 +138,6 @@ class GenerationWrapper():
                 strategy=strategy,
                 return_keys=return_keys,
                 **belief_kwargs)
-
-        if mrcnn_guesser or (not mrcnn_guesser and not mrcnn_belief):
-            object_bboxes = sample['object_bboxes']
-            object_categories = sample['object_categories']
-        elif mrcnn_belief and not mrcnn_guesser:
-            object_bboxes = sample['gt_object_bboxes']
-            object_categories = sample['gt_object_categories']
 
         object_logits = self.guesser(
             dialogue=dialogue,
@@ -124,6 +156,12 @@ class GenerationWrapper():
             return_dict['mask'] = mask
         if 'log_probs' in return_keys:
             return_dict['log_probs'] = log_probs
+        if 'object_probs' in return_keys:
+            return_dict['object_probs'] = torch.cat(
+                (object_probs, torch.nn.functional.softmax(
+                    object_logits, dim=-1).unsqueeze(1)),
+                dim=1)
+
         return return_dict
 
 

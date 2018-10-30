@@ -23,6 +23,9 @@ class QGenBelief(nn.Module):
             self.category_emb = nn.Embedding(self.guesser.cat.num_embeddings,
                                              category_embedding_dim,
                                              padding_idx=0)
+        elif object_emebdding_setting == 'from-mrcnn':
+            self.relu = nn.ReLU()
+            self.linear = nn.Linear(1024, category_embedding_dim)
 
         self.tanh = nn.Tanh()
         self.category_embedding_dim = category_embedding_dim
@@ -50,7 +53,8 @@ class QGenBelief(nn.Module):
 
         return object_probs
 
-    def get_object_emb(self, object_categories, object_bboxes):
+    def get_object_emb(self, object_categories, object_bboxes,
+                       guesser_visual_features=None):
         if self.object_emebdding_setting == 'from-guesser':
             emb = self.guesser.cat(object_categories)
             if self.guesser.setting == 'baseline':
@@ -59,14 +63,17 @@ class QGenBelief(nn.Module):
             if not self.train_guesser_setting:
                 guesser_emb.detach_()
             object_emb = self.linear(self.relu(guesser_emb))
+        elif self.object_emebdding_setting == 'from-mrcnn':
+            return self.relu(self.linear(guesser_visual_features))
         else:
             object_emb = self.category_emb(object_categories)
 
         return object_emb
 
     def get_belief_state(self, object_categories, object_bboxes,
-                         object_probs):
-        object_emb = self.get_object_emb(object_categories, object_bboxes)
+                         object_probs, guesser_visual_features=None):
+        object_emb = self.get_object_emb(object_categories, object_bboxes,
+                                         guesser_visual_features)
         belief_state = self.tanh(torch.bmm(object_probs, object_emb))
 
         return belief_state
@@ -142,7 +149,8 @@ class QGenBelief(nn.Module):
             object_probs = object_probs.view(-1, max_que, max_obj)
 
             belief_state = self.get_belief_state(object_categories,
-                                                 object_bboxes, object_probs)
+                                                 object_bboxes, object_probs,
+                                                 guesser_visual_features)
 
             # repeat belief_state over question tokens
             additional_features = visual_features.new_zeros(
@@ -173,7 +181,7 @@ class QGenBelief(nn.Module):
                   object_bboxes, num_objects, guesser_visual_features=None,
                   max_tokens=100, strategy='greedy',
                   return_keys=['generations', 'log_probs', 'hidden_states',
-                               'mask']):
+                               'mask', 'object_probs']):
 
         object_probs = \
             self.get_object_probs(dialogue, dialogue_lengths,
@@ -184,7 +192,8 @@ class QGenBelief(nn.Module):
             object_probs = object_probs.detach()
 
         belief_state = self.get_belief_state(object_categories,
-                                             object_bboxes, object_probs)
+                                             object_bboxes, object_probs,
+                                             guesser_visual_features)
 
         lengths, h, c, return_dict = self.qgen.inference(
             input=input,
@@ -195,6 +204,9 @@ class QGenBelief(nn.Module):
             max_tokens=max_tokens,
             strategy=strategy,
             return_keys=return_keys)
+
+        if 'object_probs' in return_keys:
+            return_dict['object_probs'] = object_probs
 
         return lengths, h, c, return_dict
 

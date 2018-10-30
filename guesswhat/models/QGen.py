@@ -146,7 +146,7 @@ class QGen(nn.Module):
             else:
                 break
 
-        for key in return_keys:
+        for key in return_dict:
             return_dict[key] = torch.stack(return_dict[key], dim=1)
 
         return lengths, h, c, return_dict

@@ -12,6 +12,8 @@ from utils import Vocab, CategoryVocab, QuestionerDataset, eval_epoch
 
 def main(args):
 
+    print(args)
+
     ts = datetime.datetime.now().timestamp()
 
     logger = SummaryWriter(os.path.join('exp/qgenbelief/',
@@ -127,7 +129,7 @@ if __name__ == "__main__":
 
     # Settings
     parser.add_argument('-oe', '--object-embedding-setting',
-                        choices=['learn-emb', 'from-guesser'],
+                        choices=['learn-emb', 'from-guesser', 'from-mrcnn'],
                         default='learn-emb',
                         help='Determines, which object embeddings to use. '
                         + 'Either a new embedding matrix is learned '

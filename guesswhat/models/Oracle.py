@@ -17,7 +17,9 @@ class Oracle(nn.Module):
 
         mlp_in_features = hidden_size+category_dim+8
         if filmwrapper is not None:
-            mlp_in_features += filmwrapper.out_features
+            # NOTE this does not work with dataparallel rn
+            # mlp_in_features += filmwrapper.num_out_features
+            mlp_in_features += 2048
 
         self.mlp = nn.Sequential(
             nn.Linear(mlp_in_features, mlp_hidden),
@@ -36,6 +38,11 @@ class Oracle(nn.Module):
         mlp_input = torch.cat([dialogue_emb, cat_emb, object_bboxes], dim=-1)
 
         if self.filmwrapper is not None:
+            # # for i in range(len(self.filmwrapper.module.filmed_bn_layers)):
+            # for i in range(len(self.filmwrapper.filmed_bn_layers)):
+            #     # self.filmwrapper.module.filmed_bn_layers[i].set_input_encoding(dialogue_emb)
+            #     self.filmwrapper.filmed_bn_layers[i].set_input_encoding(dialogue_emb)
+
             image_embedding = self.filmwrapper(crop, dialogue_emb)
             mlp_input = torch.cat([mlp_input, image_embedding], dim=-1)
 

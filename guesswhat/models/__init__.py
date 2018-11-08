@@ -6,3 +6,4 @@ from .QGenBelief import QGenBelief
 from .MLP import MLP
 from .GenerationWrapper import GenerationWrapper
 from .FiLM import FiLMWrapper
+from .resnet import resnet50, filmed_resnet50

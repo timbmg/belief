@@ -6,7 +6,7 @@ from collections import OrderedDict
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 
-from models import Oracle, FiLMWrapper
+from models import Oracle, filmed_resnet50
 from utils import Vocab, CategoryVocab, OracleDataset, eval_epoch
 
 
@@ -30,7 +30,11 @@ def main(args):
     category_vocab = CategoryVocab(os.path.join(args.data_dir,
                                                 'categories.csv'))
 
-    filmwrapper = FiLMWrapper(50, 512, args.hidden_size).to(device) if args.use_film else None
+    if args.use_film:
+        filmed_resnet = filmed_resnet50(langugae_embedding_size=args.hidden_size)
+        # filmwrapper = torch.nn.DataParallel(filmwrapper, device_ids=[0, 1, 2, 3])
+    else:
+        filmed_resnet = None
 
     data_loader = OrderedDict()
     splits = ['train', 'valid']
@@ -46,18 +50,13 @@ def main(args):
 
     model = Oracle(len(vocab), args.word_embedding_dim, len(category_vocab),
                    args.category_embedding_dim, args.hidden_size,
-                   args.mlp_hidden, filmwrapper).to(device)
+                   args.mlp_hidden, filmed_resnet).to(device)
+
+    #model = torch.nn.DataParallel(model)
 
     loss_fn = torch.nn.CrossEntropyLoss()
-    params = model.parameters()
 
-    if args.use_film:
-        params = list()
-        for n, p in model.named_parameters():
-            if not n.startswith('filmwrapper'):
-                params.append(p)
-        params = params + filmwrapper.film_parameters()
-
+    params = list(filter(lambda p: p.requires_grad, model.parameters()))
     optimizer = torch.optim.Adam(params, lr=args.learning_rate)
 
     forward_kwargs_mapping = {

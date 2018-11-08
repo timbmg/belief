@@ -13,10 +13,12 @@ class FiLMWrapper(nn.Module):
         self.langugae_embedding_size = langugae_embedding_size
 
         self.resnet = self.get_resnet(resnet_version)(pretrained=True)
+        for p in self.resnet.parameters():
+            p.requires_grad = False
 
         self.mlp_hidden_size = mlp_hidden_size
 
-        self.filmed_bn_layers = self.replace_batchnorm_layers()
+        # self.filmed_bn_layers = self.replace_batchnorm_layers()
 
         self.resnet = nn.Sequential(
             *list(self.resnet.children())[:-remove_last_layers])
@@ -28,23 +30,21 @@ class FiLMWrapper(nn.Module):
         elif remove_last_layers == 2:
             self.out_features = 2048 * 7 * 7
 
-    # def to(self, device):
-    #     super().to(device)
-    #     for i in range(len(self.filmed_bn_layers)):
-    #         self.filmed_bn_layers[i] = self.filmed_bn_layers[i].to(device)
-    #
-    #     return self
+    @property
+    def num_out_features(self):
+        return self.out_features
 
     def forward(self, image, language_embedding):
 
-        for i in range(len(self.filmed_bn_layers)):
-            self.filmed_bn_layers[i].set_input_encoding(language_embedding)
+        # for i in range(len(self.filmed_bn_layers)):
+        #     self.filmed_bn_layers[i].set_input_encoding(language_embedding)
 
         return self.resnet(image).squeeze(2).squeeze(2)
 
     def replace_batchnorm_layers(self):
 
-        filmed_bn_layers = list()
+        # filmed_bn_layers = list()
+        filmed_bn_layers = nn.ModuleList()
 
         resnet_stages = [self.resnet.layer1, self.resnet.layer2,
                          self.resnet.layer3, self.resnet.layer4]
@@ -105,14 +105,16 @@ class FiLMedBatchNorm2d(nn.Module):
         super().__init__()
 
         self.bn = bn
-        self.bn_weight = nn.Parameter(bn.weight, requires_grad=False)
-        self.bn_bias = nn.Parameter(bn.bias, requires_grad=False)
+        self.bn.weight.requires_grad = False
+        self.bn.weight.unsqueeze_(0)
+        self.bn.bias.requires_grad = False
+        self.bn.bias.unsqueeze_(0)
 
         self.weight_mlp = MLP(
-            [in_features, hidden_size, self.bn_weight.size(0)],
+            [in_features, hidden_size, self.bn.weight.size(1)],
             activation='relu', bias=[True, False])
         self.bias_mlp = MLP(
-            [in_features, hidden_size, self.bn_bias.size(0)],
+            [in_features, hidden_size, self.bn.bias.size(1)],
             activation='relu', bias=[True, False])
 
         self.hidden_size = hidden_size
@@ -123,13 +125,6 @@ class FiLMedBatchNorm2d(nn.Module):
                 self.bn.num_features, self.bn.eps, self.bn.momentum,
                 self.bn.affine, self.bn.track_running_stats, self.hidden_size)
 
-    # def to(self, device):
-    #     self.bn = self.bn.to(device)
-    #     self.bn_weight = self.bn_weight.to(device)
-    #     self.bn_bias = self.bn_bias.to(device)
-    #
-    #     return self
-
     def set_input_encoding(self, x):
         self.input_encoding = x
 
@@ -137,33 +132,36 @@ class FiLMedBatchNorm2d(nn.Module):
 
         batch_size, num_features, width, height = x.size()
 
-        # if self.training:
-        if False:
+        if self.training:
             mean = x.transpose(0, 1).contiguous()\
                 .view(self.bn.num_features, -1).mean()
             var = x.transpose(0, 1).contiguous()\
                 .view(self.bn.num_features, -1).var()
             self.update_running_stats(mean, var)
         else:
-            mean = self.bn.running_mean\
-                .view(1, -1, 1, 1)
-            var = self.bn.running_var\
-                .view(1, -1, 1, 1)
+            mean = self.bn.running_mean.view(1, -1, 1, 1)
+            var = self.bn.running_var.view(1, -1, 1, 1)
 
         delta_weight = self.weight_mlp(self.input_encoding)
-        weight = delta_weight + self.bn_weight.view(1, -1)
-        weight = weight.view(batch_size, -1, 1, 1)
+        weight = (self.bn.weight + delta_weight).view(batch_size, -1, 1, 1)
 
         delta_bias = self.bias_mlp(self.input_encoding)
-        bias = delta_bias + self.bn_bias.view(1, -1)
-        bias = bias.view(batch_size, -1, 1, 1)
+        bias = (self.bn.bias + delta_bias).view(batch_size, -1, 1, 1)
 
-        return weight * (x-mean)/(var + self.bn.eps) + bias
+        try:
+            return weight * ((x-mean)/(var + self.bn.eps)) + bias
+        except:
+            print(weight.size())
+            print(x.size())
+            print(mean.size())
+            print(var.size())
+            print(bias.size())
+            raise
 
     def update_running_stats(self, batch_mean, batch_var):
-        self.running_mean = self.exp_running_avg(
+        self.bn.running_mean = self.exp_running_avg(
             self.bn.running_mean, batch_mean, self.bn.momentum)
-        self.running_var = self.exp_running_avg(
+        self.bn.running_var = self.exp_running_avg(
             self.bn.running_var, batch_var, self.bn.momentum)
 
     def exp_running_avg(self, running, new, momentum):

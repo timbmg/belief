@@ -31,7 +31,7 @@ class QGen(nn.Module):
         return self.encoder.rnn.hidden_size
 
     def forward(self, dialogue, dialogue_lengths, visual_features,
-                additional_features=None, hx=None, flatten_output=True):
+                additional_features=None, hx=None, flatten_output=True, total_length=None):
 
         # prepare input embedding
         input_emb = self.emb(dialogue)
@@ -44,13 +44,13 @@ class QGen(nn.Module):
 
         # pass through encoder
         outputs, self.last_hidden = \
-            self.encoder(input_emb, dialogue_lengths, hx)
+            self.encoder(input_emb, dialogue_lengths, hx, total_length)
 
+        out = self.hidden2vocab(outputs)
         if flatten_output:
-            return self.hidden2vocab(outputs)\
-                .view(-1, self.emb.num_embeddings)
+            return out.view(-1, self.emb.num_embeddings)
         else:
-            return self.hidden2vocab(outputs)
+            return out
 
     def inference(self, input, hidden, visual_features, end_of_question_token,
                   additional_features=None, max_tokens=100, strategy='greedy',

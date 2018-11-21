@@ -15,7 +15,7 @@ class Encoder(nn.Module):
         self.rnn = cell(input_size, hidden_size,
                         bidirectional=bidirectional, batch_first=True)
 
-    def forward(self, input, lengths, hx=None):
+    def forward(self, input, lengths, hx=None, total_length=None):
 
         if input.size(0) != lengths.size(0):
             raise AssertionError("Expected first dimension of input and " +
@@ -39,7 +39,7 @@ class Encoder(nn.Module):
 
         # re-pad sequence
         outputs, _ = nn.utils.rnn.pad_packed_sequence(packed_outputs,
-                                                      batch_first=True)
+                                                      batch_first=True, total_length=total_length)
         # un-sort
         _, reversed_idx = torch.sort(sorted_idx)
         outputs = outputs[reversed_idx]

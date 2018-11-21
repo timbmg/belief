@@ -3,13 +3,14 @@ import torch
 import datetime
 import torch.nn as nn
 from models import QGen, Guesser
+from .Attention import MLBAttention
 
 
 class QGenBelief(nn.Module):
 
     def __init__(self, qgen, guesser, category_embedding_dim,
                  object_emebdding_setting, object_probs_setting,
-                 train_guesser_setting):
+                 train_guesser_setting, visual_representation='vgg'):
 
         super().__init__()
 
@@ -26,6 +27,12 @@ class QGenBelief(nn.Module):
         elif object_emebdding_setting == 'from-mrcnn':
             self.relu = nn.ReLU()
             self.linear = nn.Linear(1024, category_embedding_dim)
+
+        self.visual_representation = visual_representation
+        if self.visual_representation == 'resnet-mlb':
+            self.attn = MLBAttention(hidden_size=512,
+                                     context_size=qgen.hidden_size,
+                                     input_size=1024)
 
         self.tanh = nn.Tanh()
         self.category_embedding_dim = category_embedding_dim
@@ -80,8 +87,8 @@ class QGenBelief(nn.Module):
 
     def forward(self, dialogue, dialogue_lengths, visual_features,
                 cumulative_dialogue, cumulative_lengths, num_questions,
-                object_categories, object_bboxes, num_objects,
-                guesser_visual_features=None):
+                question_lengths, object_categories, object_bboxes,
+                num_objects, guesser_visual_features=None):
 
         if self.object_probs_setting == 'uniform':
             additional_features = self.get_object_emb(object_categories,
@@ -97,6 +104,7 @@ class QGenBelief(nn.Module):
             max_que = torch.max(num_questions)  # most q's in a dialogue
             max_dln = torch.max(dialogue_lengths)  # most tokens in a dialogue
             pad_que = len(cumulative_lengths.view(-1))  # total num of q's
+            max_que_len = torch.max(question_lengths)
 
             if self.train_guesser_setting:
                 torch.enable_grad()
@@ -155,7 +163,12 @@ class QGenBelief(nn.Module):
             # repeat belief_state over question tokens
             additional_features = visual_features.new_zeros(
                 batch_size, max_dln, self.category_embedding_dim)
+            chunked_dialogue = dialogue.new_zeros(
+                batch_size, max_que-1, max_que_len+1)  # +1 for answer
+            chunked_lengths = dialogue.new_zeros(
+                batch_size, max_que-1)
             for qi in range(max_que - 1):
+
                 running = qi < (num_questions - 1)
                 from_token = cumulative_lengths.new_zeros(batch_size) \
                     if qi == 0 else (cumulative_lengths[:, qi] - 1)
@@ -169,11 +182,42 @@ class QGenBelief(nn.Module):
                         .unsqueeze(0).repeat(to - fr, 1)\
                         .view(-1, self.category_embedding_dim)
 
-        logits = self.qgen(
-            dialogue=dialogue,
-            dialogue_lengths=dialogue_lengths,
-            visual_features=visual_features,
-            additional_features=additional_features)
+                    last_question = num_questions[bi]-1 == qi+1
+                    offset1, offset2, offset3 = 0, 1, 1
+                    if qi == 0:
+                        offset1 += 1  # +1 from <sos>
+                        offset2 -= 1
+                    if last_question:
+                        offset1 -= 1
+                        offset3 -= 1
+
+                    chunked_dialogue[bi, qi, :to - fr + offset1] = \
+                        dialogue[bi, fr + offset2:to + offset3]
+
+                    chunked_lengths[bi, qi] = (to + offset3) - (fr + offset2)
+
+        batch_ids = torch.arange(0, batch_size).long()
+        logits = visual_features.new_zeros(batch_size, max_que-1, max_que_len+1, self.qgen.emb.num_embeddings)
+        for qi in range(max_que-1):
+            run = batch_ids[qi < (num_questions - 1)]
+            logits[run, qi] = self.qgen(
+                dialogue=chunked_dialogue[run, qi],
+                dialogue_lengths=chunked_lengths[run, qi],
+                visual_features=visual_features[run],
+                additional_features=belief_state[run, qi].unsqueeze(1).repeat(1, max_que_len+1, 1),
+                hx=self.qgen.last_hidden if qi > 0 else None,
+                flatten_output=False,
+                total_length=max_que_len+1)
+
+        m = chunked_dialogue.unsqueeze(-1) > 0
+        logits = logits.masked_select(m).view(-1, self.qgen.emb.num_embeddings)
+
+        # logits = self.qgen(
+        #     dialogue=dialogue,
+        #     dialogue_lengths=dialogue_lengths,
+        #     visual_features=visual_features,
+        #     additional_features=additional_features)
+
         return logits
 
     def inference(self, input, dialogue, dialogue_lengths, hidden,

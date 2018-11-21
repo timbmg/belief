@@ -74,21 +74,26 @@ def main(args):
         'num_questions': 'num_questions',
         'object_categories': 'object_categories',
         'object_bboxes': 'object_bboxes',
-        'num_objects': 'num_objects'}
+        'num_objects': 'num_objects',
+        'question_lengths': 'question_lengths'}
     if args.mrcnn:
         forward_kwargs_mapping['guesser_visual_features'] = \
             'mrcnn_visual_features'
     target_kwarg = 'target_dialogue'
 
     best_val_loss = 1e9
+
+    def manipulate_targets(x):
+        return x.masked_select(x > 0)
+
     for epoch in range(args.epochs):
         train_loss, train_acc = eval_epoch(model, data_loader['train'],
                                            forward_kwargs_mapping,
-                                           target_kwarg, loss_fn, optimizer)
+                                           target_kwarg, loss_fn, optimizer, manipulate_targets=manipulate_targets)
 
         valid_loss, valid_acc = eval_epoch(model, data_loader['valid'],
                                            forward_kwargs_mapping,
-                                           target_kwarg, loss_fn)
+                                           target_kwarg, loss_fn, manipulate_targets=manipulate_targets)
 
         if valid_loss < best_val_loss:
             best_val_loss = valid_loss
@@ -151,6 +156,8 @@ if __name__ == "__main__":
     parser.add_argument('-tg', '--train-guesser-setting', action='store_true',
                         help='If true, the guesser is also updated during '
                         + 'the training process.')
+    parser.add_argument('-vr', '--visual-representation',
+                        choices=['vgg', 'mlb-resnet'], default='vgg')
 
     args = parser.parse_args()
 

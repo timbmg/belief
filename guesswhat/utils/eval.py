@@ -4,7 +4,8 @@ from tqdm import tqdm
 
 
 def eval_epoch(model, data_loader, forward_kwargs_mapping, target_kwarg,
-               loss_fn, optimizer=None, logger=None, clip_norm_args=None):
+               loss_fn, optimizer=None, logger=None, clip_norm_args=None,
+               manipulate_targets=None):
 
     epoch_loss, epoch_acc = 0, 0
 
@@ -26,6 +27,9 @@ def eval_epoch(model, data_loader, forward_kwargs_mapping, target_kwarg,
                 model_kwargs[model_key] = batch[batch_key]
 
             logits = model(**model_kwargs)
+
+            if manipulate_targets is not None:
+                batch[target_kwarg] = manipulate_targets(batch[target_kwarg])
 
             loss = loss_fn(logits, batch[target_kwarg].view(-1))
 

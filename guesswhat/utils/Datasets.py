@@ -144,6 +144,7 @@ class QuestionerDataset(Dataset):
                     self.data[idx]['num_questions'] = len(game['qas']) + 1
                     self.data[idx]['cumulative_lengths'] = cumulative_lengths
                     self.data[idx]['cumulative_dialogue'] = cumulative_dialogue
+                    self.data[idx]['question_lengths'] = question_lengths
                 if self.mrcnn_objects:
                     for k in mrcnn_data.keys():
                         self.data[idx][k] = mrcnn_data[k]
@@ -182,7 +183,7 @@ class QuestionerDataset(Dataset):
                         padded = item[key] + [0] * (max_dialogue_length
                                                     - item['dialogue_lengths'])
 
-                    elif key in ['cumulative_lengths']:
+                    elif key in ['cumulative_lengths', 'question_lengths']:
                         padded = item[key] \
                             + [0] * (max_num_questions
                                      - len(item['cumulative_lengths']))
@@ -227,7 +228,7 @@ class QuestionerDataset(Dataset):
                              'dialogue_lengths', 'object_categories',
                              'num_objects', 'target_id', 'target_category',
                              'cumulative_dialogue', 'best_iou_val',
-                             'multi_target_mask']:
+                             'multi_target_mask', 'question_lengths']:
                         batch[k] = batch[k].long()
 
             return batch
@@ -238,7 +239,8 @@ class QuestionerDataset(Dataset):
 class OracleDataset(Dataset):
 
     def __init__(self, file, vocab, category_vocab, successful_only,
-                 load_crops=False, crops_folder=''):
+                 load_crops=False, crops_folder='', global_features='',
+                 global_mapping='', crop_features='', crop_mapping=''):
 
         self.data = defaultdict(dict)
 
@@ -249,6 +251,20 @@ class OracleDataset(Dataset):
 
         self.load_crops = load_crops
         self.crops_folder = crops_folder
+
+        if global_features != '':
+            self.global_features = np.asarray(
+                h5py.File(global_features, 'r')['resnet152_block3'])
+            self.global_mapping = json.load(open(global_mapping))
+        else:
+            self.global_features = None
+
+        if crop_features != '':
+            self.crop_features = np.asarray(
+                h5py.File(global_features, 'r')['resnet152_block3'])
+            self.crop_mapping = json.load(open(global_mapping))
+        else:
+            self.crop_features = None
 
         tokenizer = TweetTokenizer(preserve_case=False)
         with gzip.open(file, 'r') as file:
@@ -282,19 +298,35 @@ class OracleDataset(Dataset):
                     self.data[idx]['target_category'] = target_category
                     self.data[idx]['target_bbox'] = target_bbox
                     self.data[idx]['num_objects'] = len(game['objects'])
+                    self.data[idx]['image_filename'] = \
+                        game['image']['file_name']
 
     def __len__(self):
+        return 100
         return len(self.data)
 
     def __getitem__(self, idx):
 
+        data = self.data[idx]
+
+        # TODO: consider same logic as below, not loading in mem
         if self.load_crops and 'crop' not in self.data[idx]:
             crop_path = os.path.join(
                 self.crops_folder, str(self.data[idx]['game_id']) + '.jpg')
             norm_crop = self.normalize_imagenet(crop_path)
             self.data[idx]['crop'] = norm_crop
 
-        return self.data[idx]
+        if self.global_features is not None:
+            global_features = self.global_features[
+                self.global_mapping[self.data[idx]['image_filename']]]
+            data = {**data, 'global_features': global_features}
+
+        if self.crop_features is not None:
+            crop_features = self.crop_features[
+                self.crop_mapping[self.data[idx]['image_filename']]]
+            data = {**data, 'crop_features': crop_features}
+
+        return data
 
     @staticmethod
     def normalize_imagenet(image_path):
@@ -324,20 +356,35 @@ class OracleDataset(Dataset):
                     if key in ['question']:
                         padded = item[key] + [0] \
                             * (max_question_lengths - item['question_lengths'])
+                    elif key == 'question_lengths':
+                        padded_mask = [1]*item['question_lengths'] + \
+                                      [0]*(max_question_lengths
+                                           - item['question_lengths'])
+                        batch['question_mask'].append(padded_mask)
+                        padded = item[key]
                     else:
                         padded = item[key]
 
                     batch[key].append(padded)
 
             for k in batch.keys():
-                if k == 'crop':
-                    batch[k] = torch.stack(batch[k], dim=0).to(device)
+                if k in ['image_filename']:
+                    pass
                 else:
-                    batch[k] = torch.Tensor(batch[k]).to(device)
-                if k in ['question', 'question_lengths',
-                         'target_answer', 'target_id',
-                         'target_category']:
-                    batch[k] = batch[k].long()
+                    try:
+                        if k == 'crop':
+                            batch[k] = torch.stack(batch[k], dim=0).to(device)
+                        else:
+                            batch[k] = torch.Tensor(batch[k]).to(device)
+                    except ValueError:
+                        print(k)
+                        raise
+                    if k in ['question', 'question_lengths',
+                             'target_answer', 'target_id',
+                             'target_category']:
+                        batch[k] = batch[k].long()
+                    elif k in ['question_mask']:
+                        batch[k] = batch[k].byte()
 
             return batch
 

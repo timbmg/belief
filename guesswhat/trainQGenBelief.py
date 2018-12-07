@@ -33,28 +33,49 @@ def main(args):
 
     data_loader = OrderedDict()
     splits = ['train', 'valid']
+
+    # Dataset options
     ds_kwargs = dict()
+
     if args.mrcnn:
         ds_kwargs['mrcnn_objects'] = True
         ds_kwargs['mrcnn_settings'] = \
             {'filter_category': True, 'skip_below_05': True}
+
+    load_vgg_features = args.visual_representation == 'vgg' \
+        and args.visual_embedding_dim > 0
+    if load_vgg_features:
+        ds_kwargs['load_vgg_features'] = True
+
+    load_resnet_features = args.visual_representation == 'resnet-mlb' \
+        and args.visual_embedding_dim > 0
+    if load_resnet_features:
+        ds_kwargs['load_resnet_features'] = True
+
     for split in splits:
         file = os.path.join(args.data_dir, 'guesswhat.' + split + '.jsonl.gz')
         data_loader[split] = DataLoader(
-            dataset=QuestionerDataset(file, vocab, category_vocab, True,
+            dataset=QuestionerDataset(split, file, vocab, category_vocab, True,
                                       cumulative_dialogue=True, **ds_kwargs),
             batch_size=args.batch_size,
             shuffle=split == 'train',
-            collate_fn=QuestionerDataset.get_collate_fn(device))
+            #collate_fn=QuestionerDataset.get_collate_fn(device),
+            collate_fn=QuestionerDataset.collate_fn,
+            num_workers=args.num_workers)
 
     guesser = Guesser.load(device, file=args.guesser_file)
+    if not args.train_guesser_setting:
+        for p in guesser.parameters():
+            p.requires_grad = False
     qgen = QGen(len(vocab), args.word_embedding_dim, args.num_visual_features,
                 args.visual_embedding_dim, args.hidden_size,
                 args.category_embedding_dim).to(device)
     model = QGenBelief(qgen, guesser, args.category_embedding_dim,
                        args.object_embedding_setting,
                        args.object_probs_setting,
-                       args.train_guesser_setting).to(device)
+                       args.train_guesser_setting, args.visual_representation,
+                       args.visual_query).to(device)
+
     print(model)
     logger.add_text('model', str(model))
 
@@ -68,7 +89,6 @@ def main(args):
     forward_kwargs_mapping = {
         'dialogue': 'source_dialogue',
         'dialogue_lengths': 'dialogue_lengths',
-        'visual_features': 'image_featuers',
         'cumulative_dialogue': 'cumulative_dialogue',
         'cumulative_lengths': 'cumulative_lengths',
         'num_questions': 'num_questions',
@@ -79,21 +99,30 @@ def main(args):
     if args.mrcnn:
         forward_kwargs_mapping['guesser_visual_features'] = \
             'mrcnn_visual_features'
+    if load_vgg_features:
+        forward_kwargs_mapping['visual_features'] = 'vgg_features'
+    if load_resnet_features:
+        forward_kwargs_mapping['resnet_features'] = 'resnet_features'
+
     target_kwarg = 'target_dialogue'
 
     best_val_loss = 1e9
 
-    def manipulate_targets(x):
-        return x.masked_select(x > 0)
+
+    if False:
+        manipulate_targets = (lambda x: x.masked_select(x > 0)) if args.visual_representation=='resnet-mlb' else None
+    else:
+        manipulate_targets = None
 
     for epoch in range(args.epochs):
-        train_loss, train_acc = eval_epoch(model, data_loader['train'],
-                                           forward_kwargs_mapping,
-                                           target_kwarg, loss_fn, optimizer, manipulate_targets=manipulate_targets)
+        train_loss, train_acc = eval_epoch(
+            model, data_loader['train'], forward_kwargs_mapping,
+            target_kwarg, loss_fn, optimizer,
+            manipulate_targets=manipulate_targets)
 
-        valid_loss, valid_acc = eval_epoch(model, data_loader['valid'],
-                                           forward_kwargs_mapping,
-                                           target_kwarg, loss_fn, manipulate_targets=manipulate_targets)
+        valid_loss, valid_acc = eval_epoch(
+            model, data_loader['valid'], forward_kwargs_mapping, target_kwarg,
+            loss_fn, manipulate_targets=manipulate_targets)
 
         if valid_loss < best_val_loss:
             best_val_loss = valid_loss
@@ -109,6 +138,8 @@ def main(args):
 
 if __name__ == "__main__":
 
+    # torch.multiprocessing.set_start_method('spawn')
+
     parser = argparse.ArgumentParser()
     parser.add_argument('-s', '--seed', type=int, default=1)
     parser.add_argument('-d', '--data-dir', type=str, default='data')
@@ -120,6 +151,7 @@ if __name__ == "__main__":
     # Hyperparameter
     parser.add_argument('-ep', '--epochs', type=int, default=15)
     parser.add_argument('-bs', '--batch-size', type=int, default=32)
+    parser.add_argument('-nw', '--num-workers', type=int, default=0)
     parser.add_argument('-lr', '--learning-rate', type=float, default=0.0001)
     parser.add_argument('-lrg', '--learning-rate-guesser', type=float,
                         default=0.00001)
@@ -157,7 +189,9 @@ if __name__ == "__main__":
                         help='If true, the guesser is also updated during '
                         + 'the training process.')
     parser.add_argument('-vr', '--visual-representation',
-                        choices=['vgg', 'mlb-resnet'], default='vgg')
+                        choices=['vgg', 'resnet-mlb'], default='vgg')
+    parser.add_argument('-vq', '--visual-query', choices=['hidden', 'belief'],
+                        default='belief')
 
     args = parser.parse_args()
 

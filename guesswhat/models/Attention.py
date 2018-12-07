@@ -22,22 +22,26 @@ class MLBAttention(nn.Module):
         if glimpses > 1:
             raise NotImplementedError()
 
-    def forward(self, context, inputs, mask=None):
+    def forward(self, inputs, context=None, mask=None):
+        """
+        inputs:  [B, A, F] (A beeing the dimension to do the attention over)
+        context: [B, F]
+        """
 
-        if inputs.dim() > 3:
-            size = inputs.size()
-            inputs = inputs.view(size[0], -1, size[-1])
+        if context is None:
+            context = inputs.new_zeros(inputs.size(0), self.ch.in_features)
 
         i = self.tanh(self.ih(inputs))
-        c = self.tanh(self.ch(context))
-        scores = self.score_linear(i*c.unsqueeze(1))
+        c = self.tanh(self.ch(context)).unsqueeze(1)
+
+        scores = self.score_linear(i*c)
 
         if mask is not None:
             scores = mask_attn(scores, mask)
 
         attn_weights = nn.functional.softmax(scores, dim=1)
 
-        return torch.bmm(attn_weights.transpose(1, 2), inputs)
+        return torch.bmm(attn_weights.transpose(1, 2), inputs).squeeze(1)
 
 
 class DotAttention(nn.Module):

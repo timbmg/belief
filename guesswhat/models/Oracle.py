@@ -6,20 +6,22 @@ from .Encoder import Encoder
 class Oracle(nn.Module):
 
     def __init__(self, num_embeddings, embedding_dim, num_categories,
-                 category_dim, hidden_size, mlp_hidden, filmwrapper=None):
+                 category_dim, hidden_size, mlp_hidden, global_film=None,
+                 crop_film=None):
 
         super().__init__()
 
         self.emb = nn.Embedding(num_embeddings, embedding_dim)
         self.cat = nn.Embedding(num_categories, category_dim)
         self.encoder = Encoder(embedding_dim, hidden_size)
-        self.filmwrapper = filmwrapper
+        self.global_film = global_film
+        self.crop_film = crop_film
 
         mlp_in_features = hidden_size+category_dim+8
-        if filmwrapper is not None:
-            # NOTE this does not work with dataparallel rn
-            # mlp_in_features += filmwrapper.num_out_features
-            mlp_in_features += 2048
+        if global_film is not None:
+            mlp_in_features += 512
+        if crop_film is not None:
+            mlp_in_features += 512
 
         self.mlp = nn.Sequential(
             nn.Linear(mlp_in_features, mlp_hidden),
@@ -28,23 +30,27 @@ class Oracle(nn.Module):
         )
 
     def forward(self, question, question_lengths, object_categories,
-                object_bboxes, crop=None):
+                object_bboxes, crop=None, question_mask=None,
+                global_features=None, crop_features=None):
 
         word_emb = self.emb(question)
-        dialogue_emb = self.encoder(
-            word_emb, question_lengths)[1][0].squeeze(0)
+        encoder_states, last_hidden = self.encoder(
+            word_emb, question_lengths)
 
         cat_emb = self.cat(object_categories)
-        mlp_input = torch.cat([dialogue_emb, cat_emb, object_bboxes], dim=-1)
+        mlp_input = torch.cat([last_hidden[0].squeeze(0),
+                               cat_emb, object_bboxes], dim=-1)
 
-        if self.filmwrapper is not None:
-            # # for i in range(len(self.filmwrapper.module.filmed_bn_layers)):
-            # for i in range(len(self.filmwrapper.filmed_bn_layers)):
-            #     # self.filmwrapper.module.filmed_bn_layers[i].set_input_encoding(dialogue_emb)
-            #     self.filmwrapper.filmed_bn_layers[i].set_input_encoding(dialogue_emb)
-
-            image_embedding = self.filmwrapper(crop, dialogue_emb)
-            mlp_input = torch.cat([mlp_input, image_embedding], dim=-1)
+        spat = torch.zeros(word_emb.size(0), 1, 14, 14)
+        segm = torch.zeros(word_emb.size(0), 1, 14, 14)
+        if self.global_film is not None:
+            global_emb = self.global_film(
+                global_features, encoder_states, question_mask, spat, segm)
+            mlp_input = torch.cat([mlp_input, global_emb], dim=-1)
+        if self.crop_film is not None:
+            crop_emb = self.crop_film(
+                crop_features, encoder_states, question_mask, spat, segm)
+            mlp_input = torch.cat([mlp_input, crop_emb], dim=-1)
 
         logits = self.mlp(mlp_input)
 

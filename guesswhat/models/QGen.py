@@ -30,14 +30,17 @@ class QGen(nn.Module):
     def hidden_size(self):
         return self.encoder.rnn.hidden_size
 
-    def forward(self, dialogue, dialogue_lengths, visual_features,
-                additional_features=None, hx=None, flatten_output=True, total_length=None):
+    def forward(self, dialogue, dialogue_lengths, visual_features=None,
+                additional_features=None, hx=None, flatten_output=True,
+                total_length=None):
 
         # prepare input embedding
         input_emb = self.emb(dialogue)
         if self.visual:
-            visual_emb = self.visual_emb(visual_features).unsqueeze(1)
-            visual_emb = visual_emb.repeat(1, input_emb.size(1), 1)
+            visual_emb = self.visual_emb(visual_features)
+            if visual_emb.dim() == 2:
+                visual_emb = visual_emb.unsqueeze(1)
+                visual_emb = visual_emb.repeat(1, input_emb.size(1), 1)
             input_emb = torch.cat((input_emb, visual_emb), dim=-1)
         if self.add:
             input_emb = torch.cat((input_emb, additional_features), dim=-1)
@@ -52,8 +55,9 @@ class QGen(nn.Module):
         else:
             return out
 
-    def inference(self, input, hidden, visual_features, end_of_question_token,
-                  additional_features=None, max_tokens=100, strategy='greedy',
+    def inference(self, input, hidden, end_of_question_token,
+                  visual_features=None, additional_features=None,
+                  max_tokens=100, strategy='greedy',
                   return_keys=['generations', 'log_probs', 'hidden_states',
                                'mask']):
 
@@ -70,8 +74,6 @@ class QGen(nn.Module):
         else:
             h, c = hidden
 
-        visual_features = visual_features.unsqueeze(1)
-
         lengths = input.new_zeros((batch_size)).long()
         return_dict = defaultdict(list)
 
@@ -83,6 +85,9 @@ class QGen(nn.Module):
                 .view(len(running_idx), 1, -1)
             if self.visual:
                 visual_emb = self.visual_emb(visual_features[running_idx])
+                if visual_emb.dim() == 2:
+                    visual_emb = visual_emb.unsqueeze(1)
+                    visual_emb = visual_emb.repeat(1, input_emb.size(1), 1)
                 input_emb = torch.cat((input_emb, visual_emb), dim=-1)
             if self.add:
                 input_emb = torch.cat(

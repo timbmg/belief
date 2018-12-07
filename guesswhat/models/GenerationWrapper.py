@@ -56,19 +56,22 @@ class GenerationWrapper():
         log_probs = torch.Tensor().to(device)
         object_probs = torch.Tensor().to(device)
 
-        if self.qgen.__class__.__name__ == 'QGen':
-            object_probs = torch.nn.functional.softmax(
-                self.guesser(
-                    dialogue=dialogue,
-                    dialogue_lengths=dialogue_lengths,
-                    object_categories=object_categories,
-                    object_bboxes=object_bboxes,
-                    num_objects=sample['num_objects'],
-                    visual_features=sample.get('mrcnn_visual_features',
-                                               None)),
-                dim=-1).unsqueeze(1)
-
         for qi in range(1, max_num_questions+1):
+
+            if 'object_probs' in return_keys:
+                if self.qgen.__class__.__name__ == 'QGen':
+                    return_dict['object_probs'] = torch.nn.functional.softmax(
+                        self.guesser(
+                            dialogue=dialogue,
+                            dialogue_lengths=dialogue_lengths,
+                            object_categories=object_categories,
+                            object_bboxes=object_bboxes,
+                            num_objects=sample['num_objects'],
+                            visual_features=sample.get('mrcnn_visual_features',
+                                                       None)),
+                        dim=-1).unsqueeze(1)
+                object_probs = torch.cat(
+                    (object_probs, return_dict['object_probs']), dim=1)
 
             # add question to dialogue
             dialogue = append_to_padded_sequence(
@@ -107,22 +110,8 @@ class GenerationWrapper():
             dialogue_lengths += 1
 
             if qi == max_num_questions:
+                # last forward does not have to be done
                 break
-
-            if 'object_probs' in return_keys:
-                if self.qgen.__class__.__name__ == 'QGen':
-                    return_dict['object_probs'] = torch.nn.functional.softmax(
-                        self.guesser(
-                            dialogue=dialogue,
-                            dialogue_lengths=dialogue_lengths,
-                            object_categories=object_categories,
-                            object_bboxes=object_bboxes,
-                            num_objects=sample['num_objects'],
-                            visual_features=sample.get('mrcnn_visual_features',
-                                                       None)),
-                        dim=-1).unsqueeze(1)
-                object_probs = torch.cat(
-                    (object_probs, return_dict['object_probs']), dim=1)
 
             if belief_state:
                 # update dialogue with new q/a pair

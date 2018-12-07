@@ -3,6 +3,7 @@ import json
 import torch
 import argparse
 import numpy as np
+from tqdm import tqdm
 from collections import OrderedDict, defaultdict
 from torch.utils.data import DataLoader
 
@@ -22,6 +23,7 @@ def main(args):
     data_loader = OrderedDict()
     splits = (['train'] if args.train_set else list()) + ['valid'] + \
              (['test'] if args.test_set else list())
+    splits = ['test']
     ds_kwargs = dict()
     if args.mrcnn_belief or args.mrcnn_guesser:
         ds_kwargs['mrcnn_objects'] = True
@@ -44,64 +46,40 @@ def main(args):
     generation_wrapper = GenerationWrapper(qgen, guesser, oracle)
 
     torch.no_grad()
-    save_data = defaultdict(dict)
+    dump_data = defaultdict(dict)
     for split in splits:
 
         total_acc = list()
         multi_target_acc = list()
-        for iteration, sample in enumerate(data_loader[split]):
-            return_dict = generation_wrapper.generate(
-                sample, vocab, args.strategy, args.max_num_questions, device,
-                args.belief_state, args.mrcnn_belief, args.mrcnn_guesser,
-                return_keys=['generations', 'log_probs', 'hidden_states',
-                             'mask', 'object_probs'])
+        with tqdm(total=len(data_loader[split]), desc=split, unit='batches') as pbar:
+            for iteration, sample in enumerate(data_loader[split]):
+                return_dict = generation_wrapper.generate(
+                    sample, vocab, args.strategy, args.max_num_questions,
+                    device, args.belief_state, args.mrcnn_belief,
+                    args.mrcnn_guesser,
+                    return_keys=['generations', 'log_probs', 'hidden_states',
+                                 'mask', 'object_probs'])
 
-            if args.mrcnn_belief and not args.mrcnn_guesser:
-                target_id = sample['gt_target_id']
-            else:
-                target_id = sample['target_id']
+                if args.mrcnn_belief and not args.mrcnn_guesser:
+                    target_id = sample['gt_target_id']
+                else:
+                    target_id = sample['target_id']
 
-            acc = accuarcy(return_dict['object_logits'], target_id)
-            total_acc += [acc]
-            # print(np.mean(total_acc))
+                acc = accuarcy(return_dict['object_logits'], target_id)
+                total_acc += [acc]
 
-            if args.mrcnn_guesser:
-                multi_target_acc += \
-                    [multi_target_accuracy(return_dict['object_logits'],
-                                           sample['multi_target_mask'])]
+                if args.mrcnn_guesser:
+                    multi_target_acc += \
+                        [multi_target_accuracy(return_dict['object_logits'],
+                                               sample['multi_target_mask'])]
 
-            if args.save_data:
-                for i, game_id in enumerate(sample['game_id']):
-                    game_id = game_id.item()
-                    no = sample['num_objects'][i].item()
-                    dl = torch.sum(return_dict['mask'], 1)[i].item()
+                if args.save_data:
+                    dump_data = save_data(sample, dump_data, return_dict,
+                                          split, vocab, category_vocab,
+                                          args.max_num_questions)
 
-                    save_data[game_id]['split'] = split
-                    save_data[game_id]['dialogue'] = ' '.join(vocab.decode(
-                        return_dict['dialogue'][i].tolist()[:dl+6]))
-                    save_data[game_id]['object_probs'] = \
-                        [op[:no] for op in return_dict['object_probs'][i].tolist()]
-                    save_data[game_id]['object_categories'] = \
-                        category_vocab.decode(
-                            sample['object_categories'][i].tolist())[:no]
-                    save_data[game_id]['bbox'] = \
-                        sample['orignal_bboxes'][i].tolist()[:no]
-                    save_data[game_id]['target_id'] = \
-                        sample['target_id'][i].item()
-                    save_data[game_id]['prediction'] = \
-                        int(np.argmax(save_data[game_id]['object_probs'][-1]))
+                pbar.update(1)
 
-                    save_data[game_id]['success'] = \
-                        bool(return_dict['object_logits'][i].topk(1)[1] == sample['target_id'][i])
-                    save_data[game_id]['image_width'] = sample['image_width'][i].item()
-                    save_data[game_id]['image_height'] = sample['image_height'][i].item()
-                    save_data[game_id]['image_file'] = sample['image'][i]
-                    save_data[game_id]['image_url'] = sample['image_url'][i]
-                break
-
-            if args.save_data:
-                json.dump(save_data, open('generations/{}.json'.format(
-                    os.path.basename(os.path.normpath(args.qgen_file))), 'w'))
 
         print("{} Accuracy {}".format(split.upper(), np.mean(total_acc)))
 
@@ -123,10 +101,45 @@ def main(args):
                   .format(split.upper(), multi_target_acc))
 
         if args.save_data:
-            json.dump(save_data, open('generations/{}.json'.format(os.path.basename(os.path.normpath(args.qgen_file))), 'w'))
+            json.dump(dump_data, open(
+                'analysis/{}_{}.json'.format(
+                    os.path.basename(os.path.normpath(args.qgen_file)),
+                    split), 'w'))
 
-def save_data(sample, return_dict):
-    pass
+
+def save_data(sample, save_data, return_dict, split, vocab, category_vocab,
+              max_num_questions):
+    for i, game_id in enumerate(sample['game_id']):
+        game_id = game_id.item()
+        no = sample['num_objects'][i].item()
+        dl = torch.sum(return_dict['mask'], 1)[i].item()
+
+        save_data[game_id]['split'] = split
+        save_data[game_id]['dialogue'] = ' '.join(vocab.decode(
+            return_dict['dialogue'][i].tolist()[:dl+max_num_questions+1]))
+        save_data[game_id]['object_probs'] = \
+            [op[:no] for op in return_dict['object_probs'][i].tolist()]
+        save_data[game_id]['object_categories'] = \
+            category_vocab.decode(
+                sample['object_categories'][i].tolist())[:no]
+        save_data[game_id]['bbox'] = \
+            sample['orignal_bboxes'][i].tolist()[:no]
+        save_data[game_id]['target_id'] = \
+            sample['target_id'][i].item()
+        save_data[game_id]['prediction'] = \
+            int(np.argmax(save_data[game_id]['object_probs'][-1]))
+
+        save_data[game_id]['success'] = \
+            bool(return_dict['object_logits'][i].topk(1)[1] ==
+                 sample['target_id'][i])
+        save_data[game_id]['image_width'] = \
+            sample['image_width'][i].item()
+        save_data[game_id]['image_height'] = \
+            sample['image_height'][i].item()
+        save_data[game_id]['image_file'] = sample['image'][i]
+        save_data[game_id]['image_url'] = sample['image_url'][i]
+
+    return save_data
 
 
 if __name__ == "__main__":

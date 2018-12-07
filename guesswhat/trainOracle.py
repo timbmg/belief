@@ -6,7 +6,7 @@ from collections import OrderedDict
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 
-from models import Oracle, filmed_resnet50
+from models import Oracle, filmed_resnet50, MultiHopFiLM
 from utils import Vocab, CategoryVocab, OracleDataset, eval_epoch
 
 
@@ -30,11 +30,14 @@ def main(args):
     category_vocab = CategoryVocab(os.path.join(args.data_dir,
                                                 'categories.csv'))
 
-    if args.use_film:
-        filmed_resnet = filmed_resnet50(langugae_embedding_size=args.hidden_size)
-        # filmwrapper = torch.nn.DataParallel(filmwrapper, device_ids=[0, 1, 2, 3])
-    else:
-        filmed_resnet = None
+    # if args.use_film:
+    #     filmed_resnet = filmed_resnet50(langugae_embedding_size=args.hidden_size)
+    #     # filmwrapper = torch.nn.DataParallel(filmwrapper, device_ids=[0, 1, 2, 3])
+    # else:
+    #     filmed_resnet = None
+
+    global_film = MultiHopFiLM(128, args.hidden_size, 128)
+    crop_film = None
 
     data_loader = OrderedDict()
     splits = ['train', 'valid']
@@ -42,15 +45,20 @@ def main(args):
         file = os.path.join(args.data_dir, 'guesswhat.' + split + '.jsonl.gz')
         data_loader[split] = DataLoader(
             dataset=OracleDataset(
-                file, vocab, category_vocab, True, load_crops=args.use_film,
-                crops_folder=args.crops_folder),
+                file, vocab, category_vocab, True,
+                load_crops=args.use_film,
+                crops_folder=args.crops_folder,
+                global_features=args.global_features,
+                global_mapping=args.global_mapping,
+                crop_features=args.crop_features,
+                crop_mapping=args.crop_mapping),
             batch_size=args.batch_size,
             shuffle=split == 'train',
             collate_fn=OracleDataset.get_collate_fn(device))
 
     model = Oracle(len(vocab), args.word_embedding_dim, len(category_vocab),
                    args.category_embedding_dim, args.hidden_size,
-                   args.mlp_hidden, filmed_resnet).to(device)
+                   args.mlp_hidden, global_film, crop_film).to(device)
 
     #model = torch.nn.DataParallel(model)
 
@@ -62,8 +70,11 @@ def main(args):
     forward_kwargs_mapping = {
         'question': 'question',
         'question_lengths': 'question_lengths',
+        'question_mask': 'question_mask',
         'object_categories': 'target_category',
-        'object_bboxes': 'target_bbox'}
+        'object_bboxes': 'target_bbox',
+        'global_features': 'global_features',
+        'crop_features': 'crop_features'}
     if args.use_film:
         forward_kwargs_mapping['crop'] = 'crop'
     target_kwarg = 'target_answer'
@@ -104,9 +115,21 @@ if __name__ == "__main__":
     parser.add_argument('-exp', '--exp-name', type=str, required=True)
 
     parser.add_argument('-film', '--use_film', action='store_true')
-    parser.add_argument(
-        '-crops', '--crops-folder', type=str,
-        default='/Users/timbaumgartner/MSCOCO/guesswhat_crops')
+    parser.add_argument('-crops', '--crops-folder', type=str,
+                        default='/Users/timbaumgartner/MSCOCO/guesswhat_crops')
+
+    parser.add_argument('-global-features', '--global-features', type=str,
+                        default='data/resnet152_block3.hdf5')
+    parser.add_argument('-global-mapping', '--global-mapping', type=str,
+                        default='data/resnet_block3_imagefile2id.json')
+
+    parser.add_argument('-crop-features', '--crop-features', type=str,
+                        # default='data/resnet152_block3.hdf5')
+                        default='')
+    parser.add_argument('-crop-mapping', '--crop-mapping', type=str,
+                        # default='data/resnet_block3_imagefile2id.json')
+                        default='')
+
     parser.add_argument('-f-hidden', '--film-mlp-hidden', type=int,
                         default=512)
 

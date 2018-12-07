@@ -1,10 +1,9 @@
 import torch
-import time
 from tqdm import tqdm
 
 
 def eval_epoch(model, data_loader, forward_kwargs_mapping, target_kwarg,
-               loss_fn, optimizer=None, logger=None, clip_norm_args=None,
+               loss_fn, optimizer=None, clip_norm_args=None,
                manipulate_targets=None):
 
     epoch_loss, epoch_acc = 0, 0
@@ -18,8 +17,8 @@ def eval_epoch(model, data_loader, forward_kwargs_mapping, target_kwarg,
         model.eval()
         torch.no_grad()
 
-    t1 = time.time()
-    with tqdm(total=len(data_loader), desc='train' if optimizer is not None else 'valid', unit='batches') as pbar:
+    desc = 'train' if optimizer is not None else 'valid'
+    with tqdm(total=len(data_loader), desc=desc, unit='batches') as pbar:
         for iteration, batch in enumerate(data_loader):
 
             model_kwargs = dict()
@@ -47,10 +46,6 @@ def eval_epoch(model, data_loader, forward_kwargs_mapping, target_kwarg,
                                 opti.param_groups[pg]['params'], *clip_norm_args)
                     opti.step()
 
-            # if iteration % 200 == 0:
-            #     print("It: {:5d}/{:5d}, Loss: {:8.6f}, Time {:06.2f}".format(
-            #         iteration, len(data_loader), loss.item(), time.time()-t1))
-            #     t1 = time.time()
             pbar.update(1)
 
         return epoch_loss/len(data_loader), epoch_acc/len(data_loader)

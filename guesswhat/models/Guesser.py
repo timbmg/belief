@@ -66,7 +66,7 @@ class Guesser(nn.Module):
 
         return logits
 
-    def save(self, file='bin/guesser_belief.pt'):
+    def save(self, file='bin/guesser.pt'):
 
         params = dict()
         params['num_embeddings'] = self.emb.num_embeddings

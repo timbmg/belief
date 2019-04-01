@@ -6,7 +6,7 @@ This code as been developed with python 3.6.5.
 Requirements can be found in the [requirements.txt](requirements.txt).
 
 ### Downloads
-- Clone this repository and change.
+- Clone this repository.
 ```bash
 git clone git@github.com:timbmg/believe.git
 ```
@@ -22,9 +22,10 @@ Alternatively, you can create the VGG16 FC8 yourself with
 ```bash
 python3 utils/cache_vgg_features.py
 ```
+Note that you need the training and validation set of MS COCO 2014.  
 For the Vocabulary and Category Vocabulary, if the files are not found in the specified folder for the training scripts, they will be created.
 
-- Download the bin and log files.
+- Download the bin and log files of the pretrained models.
 ```bash
 # todo
 ```

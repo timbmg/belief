@@ -27,7 +27,7 @@ For the Vocabulary and Category Vocabulary, if the files are not found in the sp
 
 - Download the bin and log files of the pretrained models.
 ```bash
-# todo
+bash bin/download.sh
 ```
 
 ## Baseline Models

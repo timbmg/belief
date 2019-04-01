@@ -63,7 +63,7 @@ python3 trainQGenBelief.py \
   --visual-embedding-dim 128 \
   --category-embedding-dim 512
 ```
-- Visual Attention
+- Visual Attention  
 First the ResNet features have to be cached. This can be done with the following script (warning: the file will be about 69GB large).
 ```bash
 python3 cache_resnetblock3_features.py

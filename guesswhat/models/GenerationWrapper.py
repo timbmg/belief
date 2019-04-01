@@ -12,6 +12,43 @@ class GenerationWrapper():
     def __call__(self, *args, **kwargs):
         return self.generate(*args, **kwargs)
 
+    def get_guesser_probs(self, dialogue, dialogue_lengths, object_categories,
+                          object_bboxes, sample):
+        return torch.nn.functional.softmax(
+            self.guesser(
+                dialogue=dialogue,
+                dialogue_lengths=dialogue_lengths,
+                object_categories=object_categories,
+                object_bboxes=object_bboxes,
+                num_objects=sample['num_objects'],
+                visual_features=sample.get('mrcnn_visual_features',
+                                           None)),
+            dim=-1).unsqueeze(1)
+
+    def get_object_probs(self, guesser_probs, belief_probs, return_dict,
+                         dialogue, dialogue_lengths, object_categories,
+                         object_bboxes, sample):
+
+        if self.qgen.__class__.__name__ == 'QGen':
+            return_dict['object_probs'] = self.get_guesser_probs(
+                dialogue, dialogue_lengths, object_categories,
+                object_bboxes, sample)
+
+        if not getattr(self.qgen, 'train_guesser_setting', False):
+            # baseline or frozen guesser
+            guesser_probs = torch.cat(
+                (guesser_probs, return_dict['object_probs']), dim=1)
+        else:
+            # fine tuned guesser
+            guesser_probs = torch.cat(
+                (guesser_probs, self.get_guesser_probs(
+                    dialogue, dialogue_lengths, object_categories,
+                    object_bboxes, sample)), dim=1)
+            belief_probs = torch.cat(
+                (belief_probs, return_dict['object_probs']), dim=1)
+
+        return guesser_probs, belief_probs
+
     def generate(self, sample, vocab, strategy, max_num_questions,
                  device, belief_state=False, mrcnn_belief=False,
                  mrcnn_guesser=False, return_keys=['generations']):
@@ -19,7 +56,8 @@ class GenerationWrapper():
         batch_size = sample['source_dialogue'].size(0)
         dialogue = sample['source_dialogue'].clone()
         dialogue_lengths = dialogue.new_ones(batch_size)
-        visual_features = sample['image_featuers']
+        # visual_features = sample['image_featuers']
+        visual_features = sample['vgg_features']
         input = dialogue.new_empty(batch_size)\
             .fill_(vocab['<sos>']).unsqueeze(1)
 
@@ -42,36 +80,31 @@ class GenerationWrapper():
             object_bboxes = sample['gt_object_bboxes']
             object_categories = sample['gt_object_categories']
 
+        if getattr(self.qgen, 'visual_representation', '') == 'resnet-mlb':
+            belief_kwargs['resnet_features'] = sample['resnet_features']
+
         questions_lengths, h, c, return_dict = self.qgen.inference(
             input=input,
             visual_features=visual_features,
             end_of_question_token=vocab['<eoq>'],
             hidden=None,
             strategy=strategy,
+            # resnet_features=resnet_features,
             return_keys=return_keys,
             **belief_kwargs)
 
         hidden_states = torch.Tensor().to(device)
         mask = torch.ByteTensor().to(device)
         log_probs = torch.Tensor().to(device)
-        object_probs = torch.Tensor().to(device)
+        guesser_probs = torch.Tensor().to(device)
+        belief_probs = torch.Tensor().to(device)
+
+        if 'object_probs' in return_keys:
+            guesser_probs, belief_probs = self.get_object_probs(
+                guesser_probs, belief_probs, return_dict, dialogue,
+                dialogue_lengths, object_categories, object_bboxes, sample)
 
         for qi in range(1, max_num_questions+1):
-
-            if 'object_probs' in return_keys:
-                if self.qgen.__class__.__name__ == 'QGen':
-                    return_dict['object_probs'] = torch.nn.functional.softmax(
-                        self.guesser(
-                            dialogue=dialogue,
-                            dialogue_lengths=dialogue_lengths,
-                            object_categories=object_categories,
-                            object_bboxes=object_bboxes,
-                            num_objects=sample['num_objects'],
-                            visual_features=sample.get('mrcnn_visual_features',
-                                                       None)),
-                        dim=-1).unsqueeze(1)
-                object_probs = torch.cat(
-                    (object_probs, return_dict['object_probs']), dim=1)
 
             # add question to dialogue
             dialogue = append_to_padded_sequence(
@@ -109,10 +142,6 @@ class GenerationWrapper():
                 appendix_lengths=answers.new_ones(answers.size(0)))
             dialogue_lengths += 1
 
-            if qi == max_num_questions:
-                # last forward does not have to be done
-                break
-
             if belief_state:
                 # update dialogue with new q/a pair
                 belief_kwargs['dialogue'] = dialogue
@@ -125,8 +154,14 @@ class GenerationWrapper():
                 end_of_question_token=vocab.w2i['<eoq>'],
                 hidden=(h, c),
                 strategy=strategy,
+                # resnet_features=resnet_features,
                 return_keys=return_keys,
                 **belief_kwargs)
+
+            if 'object_probs' in return_keys:
+                guesser_probs, belief_probs = self.get_object_probs(
+                    guesser_probs, belief_probs, return_dict, dialogue,
+                    dialogue_lengths, object_categories, object_bboxes, sample)
 
         object_logits = self.guesser(
             dialogue=dialogue,
@@ -146,10 +181,12 @@ class GenerationWrapper():
         if 'log_probs' in return_keys:
             return_dict['log_probs'] = log_probs
         if 'object_probs' in return_keys:
-            return_dict['object_probs'] = torch.cat(
-                (object_probs, torch.nn.functional.softmax(
-                    object_logits, dim=-1).unsqueeze(1)),
-                dim=1)
+            # return_dict['object_probs'] = torch.cat(
+            #     (object_probs, torch.nn.functional.softmax(
+            #         object_logits, dim=-1).unsqueeze(1)),
+            #     dim=1)
+            return_dict['guesser_probs'] = guesser_probs
+            return_dict['belief_probs'] = belief_probs
 
         return return_dict
 
@@ -162,9 +199,23 @@ def append_to_padded_sequence(padded_sequence, sequence_lengths, appendix,
 
     for si in range(len(padded_sequence)):
         new_length = sequence_lengths[si].item() + appendix_lengths[si].item()
-        sequence[si, :new_length] = torch.cat(
-            (padded_sequence[si, :sequence_lengths[si]],
-             appendix[si, :appendix_lengths[si]]))
+        try:
+            sequence[si, :new_length] = torch.cat(
+                (padded_sequence[si, :sequence_lengths[si]],
+                 appendix[si, :appendix_lengths[si]]))
+        except:
+            print(padded_sequence)
+            print(sequence_lengths)
+            print(appendix)
+            print(appendix_lengths)
+            print("---")
+            print(sequence[si])
+            print(new_length)
+            print(padded_sequence[si])
+            print(sequence_lengths[si])
+            print(appendix[si])
+            print(appendix_lengths[si])
+            raise
 
     return sequence
 

@@ -13,12 +13,12 @@ from utils import Vocab, CategoryVocab, OracleDataset, eval_epoch
 def main(args):
     print(args)
 
-    ts = datetime.datetime.now().timestamp()
-
-    logger = SummaryWriter(os.path.join('exp/oracle/',
-                                        '{}_{}'.format(args.exp_name, ts)))
-    logger.add_text('exp_name', args.exp_name)
-    logger.add_text('args', str(args))
+    if not args.eval:
+        ts = datetime.datetime.now().timestamp()
+        logger = SummaryWriter(os.path.join('exp/oracle/',
+                                            '{}_{}'.format(args.exp_name, ts)))
+        logger.add_text('exp_name', args.exp_name)
+        logger.add_text('args', str(args))
 
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
@@ -36,11 +36,16 @@ def main(args):
     # else:
     #     filmed_resnet = None
 
-    global_film = MultiHopFiLM(128, args.hidden_size, 128)
+    #global_film = MultiHopFiLM(128, args.hidden_size, 128)
+    global_film = None
     crop_film = None
 
     data_loader = OrderedDict()
-    splits = ['train', 'valid']
+    if not args.eval:
+        splits = ['train', 'valid']
+    else:
+        splits = ['valid', 'test']
+
     for split in splits:
         file = os.path.join(args.data_dir, 'guesswhat.' + split + '.jsonl.gz')
         data_loader[split] = DataLoader(
@@ -56,11 +61,12 @@ def main(args):
             shuffle=split == 'train',
             collate_fn=OracleDataset.get_collate_fn(device))
 
-    model = Oracle(len(vocab), args.word_embedding_dim, len(category_vocab),
-                   args.category_embedding_dim, args.hidden_size,
-                   args.mlp_hidden, global_film, crop_film).to(device)
-
-    #model = torch.nn.DataParallel(model)
+    if not args.eval:
+        model = Oracle(len(vocab), args.word_embedding_dim, len(category_vocab),
+                       args.category_embedding_dim, args.hidden_size,
+                       args.mlp_hidden, global_film, crop_film).to(device)
+    else:
+        model = Oracle.load(device, file=args.bin)
 
     loss_fn = torch.nn.CrossEntropyLoss()
 
@@ -70,11 +76,11 @@ def main(args):
     forward_kwargs_mapping = {
         'question': 'question',
         'question_lengths': 'question_lengths',
-        'question_mask': 'question_mask',
+        #'question_mask': 'question_mask',
         'object_categories': 'target_category',
-        'object_bboxes': 'target_bbox',
-        'global_features': 'global_features',
-        'crop_features': 'crop_features'}
+        'object_bboxes': 'target_bbox'}
+        #'global_features': 'global_features',
+        #'crop_features': 'crop_features'}
     if args.use_film:
         forward_kwargs_mapping['crop'] = 'crop'
     target_kwarg = 'target_answer'
@@ -82,29 +88,42 @@ def main(args):
     best_val_acc = 0
 
     for epoch in range(args.epochs):
-        train_loss, train_acc = eval_epoch(model, data_loader['train'],
-                                           forward_kwargs_mapping,
-                                           target_kwarg, loss_fn, optimizer,
-                                           clip_norm_args=[args.clip_value])
+        if not args.eval:
+            train_loss, train_acc = eval_epoch(model, data_loader['train'],
+                                               forward_kwargs_mapping,
+                                               target_kwarg, loss_fn, optimizer,
+                                               clip_norm_args=[args.clip_value])
 
         valid_loss, valid_acc = eval_epoch(model, data_loader['valid'],
                                            forward_kwargs_mapping,
                                            target_kwarg, loss_fn)
+        if args.eval:
+            test_loss, test_acc = eval_epoch(model, data_loader['test'],
+                                             forward_kwargs_mapping,
+                                             target_kwarg, loss_fn)
 
-        if valid_acc > best_val_acc:
-            best_val_acc = valid_acc
-            model.save(os.path.join('bin', 'oracle_{}_{}.pt'
-                                    .format(args.exp_name, ts)))
+            print("Valid Loss {:07.4f} Valid Acc {:07.4f}".format(
+                valid_loss, valid_acc))
+            print("Test Loss {:07.4f} Test Acc {:07.4f}".format(
+                test_loss, test_acc))
 
-        logger.add_scalar('train_loss', train_loss, epoch)
-        logger.add_scalar('valid_loss', valid_loss, epoch)
-        logger.add_scalar('train_acc', train_acc, epoch)
-        logger.add_scalar('valid_acc', valid_acc, epoch)
+            break
 
-        print(("Epoch {:2d}/{:2d} Train Loss {:07.4f} Vaild Loss {:07.4f} " +
-               "Train Acc {:07.4f} Vaild Acc {:07.4f}")
-              .format(epoch, args.epochs, train_loss, valid_loss,
-                      train_acc*100, valid_acc*100))
+        else:
+            if valid_acc > best_val_acc:
+                best_val_acc = valid_acc
+                model.save(os.path.join('bin', 'oracle_{}_{}.pt'
+                                        .format(args.exp_name, ts)))
+
+            logger.add_scalar('train_loss', train_loss, epoch)
+            logger.add_scalar('valid_loss', valid_loss, epoch)
+            logger.add_scalar('train_acc', train_acc, epoch)
+            logger.add_scalar('valid_acc', valid_acc, epoch)
+
+            print(("Epoch {:2d}/{:2d} Train Loss {:07.4f} Vaild Loss {:07.4f} " +
+                   "Train Acc {:07.4f} Vaild Acc {:07.4f}")
+                  .format(epoch, args.epochs, train_loss, valid_loss,
+                          train_acc*100, valid_acc*100))
 
 
 if __name__ == "__main__":
@@ -113,6 +132,8 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--seed', type=int, default=1)
     parser.add_argument('-d', '--data-dir', type=str, default='data')
     parser.add_argument('-exp', '--exp-name', type=str, required=True)
+    parser.add_argument('-eval', '--eval', action='store_true')
+    parser.add_argument('-bin', '--bin', type=str, default='bin/oracle.pt')
 
     parser.add_argument('-film', '--use_film', action='store_true')
     parser.add_argument('-crops', '--crops-folder', type=str,

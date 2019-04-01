@@ -20,30 +20,37 @@ def main(args):
     category_vocab = CategoryVocab(os.path.join(args.data_dir,
                                                 'categories.csv'))
 
-    data_loader = OrderedDict()
-    splits = (['train'] if args.train_set else list()) + ['valid'] + \
-             (['test'] if args.test_set else list())
-    splits = ['test']
-    ds_kwargs = dict()
-    if args.mrcnn_belief or args.mrcnn_guesser:
-        ds_kwargs['mrcnn_objects'] = True
-        ds_kwargs['mrcnn_settings'] = \
-            {'filter_category': True, 'skip_below_05': True}
-    for split in splits:
-        file = os.path.join(args.data_dir, 'guesswhat.' + split + '.jsonl.gz')
-        data_loader[split] = DataLoader(
-            dataset=InferenceDataset(file, vocab, category_vocab, **ds_kwargs),
-            batch_size=args.batch_size,
-            collate_fn=InferenceDataset.get_collate_fn(device))
-
     if not args.belief_state:
         qgen = QGen.load(device, file=args.qgen_file)
     else:
         qgen = QGenBelief.load(device, file=args.qgen_file)
     guesser = Guesser.load(device, file=args.guesser_file)
     oracle = Oracle.load(device, file=args.oracle_file)
-
     generation_wrapper = GenerationWrapper(qgen, guesser, oracle)
+
+    ds_kwargs = dict()
+    load_vgg_features = qgen.visual_representation == 'vgg'
+    if load_vgg_features:
+        ds_kwargs['load_vgg_features'] = True
+
+    load_resnet_features = 'resnet' in qgen.visual_representation
+    if load_resnet_features:
+        ds_kwargs['load_resnet_features'] = True
+
+    if args.mrcnn_belief or args.mrcnn_guesser:
+        ds_kwargs['mrcnn_objects'] = True
+        ds_kwargs['mrcnn_settings'] = \
+            {'filter_category': True, 'skip_below_05': True}
+
+    data_loader = OrderedDict()
+    splits = [args.split]
+    for split in splits:
+        file = os.path.join(args.data_dir, 'guesswhat.' + split + '.jsonl.gz')
+        data_loader[split] = DataLoader(
+            dataset=InferenceDataset(
+                split, file, vocab, category_vocab, args.data_dir, **ds_kwargs),
+            batch_size=args.batch_size,
+            collate_fn=InferenceDataset.get_collate_fn(device))
 
     torch.no_grad()
     dump_data = defaultdict(dict)
@@ -79,7 +86,6 @@ def main(args):
                                           args.max_num_questions)
 
                 pbar.update(1)
-
 
         print("{} Accuracy {}".format(split.upper(), np.mean(total_acc)))
 
@@ -117,8 +123,11 @@ def save_data(sample, save_data, return_dict, split, vocab, category_vocab,
         save_data[game_id]['split'] = split
         save_data[game_id]['dialogue'] = ' '.join(vocab.decode(
             return_dict['dialogue'][i].tolist()[:dl+max_num_questions+1]))
-        save_data[game_id]['object_probs'] = \
-            [op[:no] for op in return_dict['object_probs'][i].tolist()]
+        save_data[game_id]['guesser_probs'] = \
+            [op[:no] for op in return_dict['guesser_probs'][i].tolist()]
+        if len(return_dict['belief_probs']) > 0:
+            save_data[game_id]['belief_probs'] = \
+                [op[:no] for op in return_dict['belief_probs'][i].tolist()]
         save_data[game_id]['object_categories'] = \
             category_vocab.decode(
                 sample['object_categories'][i].tolist())[:no]
@@ -127,7 +136,7 @@ def save_data(sample, save_data, return_dict, split, vocab, category_vocab,
         save_data[game_id]['target_id'] = \
             sample['target_id'][i].item()
         save_data[game_id]['prediction'] = \
-            int(np.argmax(save_data[game_id]['object_probs'][-1]))
+            int(np.argmax(save_data[game_id]['guesser_probs'][-1]))
 
         save_data[game_id]['success'] = \
             bool(return_dict['object_logits'][i].topk(1)[1] ==
@@ -162,10 +171,9 @@ if __name__ == "__main__":
     parser.add_argument('-mq', '--max_num_questions', type=int, default=5)
     parser.add_argument('-s', '--strategy', choices=['greedy', 'sampling'],
                         default='greedy')
-    parser.add_argument('-b', '--batch_size', type=int, default=32)
+    parser.add_argument('-b', '--batch_size', type=int, default=128)
     parser.add_argument('-nw', '--num_workers', type=int, default=2)
-    parser.add_argument('-train', '--train_set', action='store_true')
-    parser.add_argument('-test', '--test_set', action='store_true')
+    parser.add_argument('-sp', '--split', choices=['train', 'valid', 'test'], default='valid')
 
     # .pt files
     parser.add_argument('-oracle', '--oracle-file', type=str,

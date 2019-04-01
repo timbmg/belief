@@ -2,9 +2,9 @@ import os
 import torch
 import datetime
 import torch.nn as nn
-from torchvision.models import resnet50
 from models import QGen, Guesser
 from .Attention import MLBAttention
+from .MLP import MLP
 
 
 class QGenBelief(nn.Module):
@@ -12,7 +12,7 @@ class QGenBelief(nn.Module):
     def __init__(self, qgen, guesser, category_embedding_dim,
                  object_emebdding_setting, object_probs_setting,
                  train_guesser_setting, visual_representation='vgg',
-                 visual_query=None):
+                 num_visual_features=None, visual_query=None):
 
         super().__init__()
 
@@ -26,11 +26,21 @@ class QGenBelief(nn.Module):
             self.category_emb = nn.Embedding(self.guesser.cat.num_embeddings,
                                              category_embedding_dim,
                                              padding_idx=0)
+        elif object_emebdding_setting == 'learn-emb-spatial':
+            self.category_emb = nn.Embedding(self.guesser.cat.num_embeddings,
+                                             category_embedding_dim,
+                                             padding_idx=0)
+            self.object_representation_mlp = MLP(
+                sizes=[category_embedding_dim+8, 512, category_embedding_dim],
+                activation='relu')
+
         elif object_emebdding_setting == 'from-mrcnn':
             self.relu = nn.ReLU()
             self.linear = nn.Linear(1024, category_embedding_dim)
 
         self.visual_representation = visual_representation
+        self.visual_query = visual_query
+        self.num_visual_features = num_visual_features
         if self.visual_representation == 'resnet-mlb':
             if visual_query == 'belief':
                 context_size = category_embedding_dim
@@ -38,14 +48,7 @@ class QGenBelief(nn.Module):
                 context_size = qgen.hidden_size
             self.attn = MLBAttention(hidden_size=512,
                                      context_size=context_size,
-                                     input_size=1024)
-            self.attn_linear = nn.Linear(1024, 512)
-
-            self.resnet = resnet50(pretrained=True)
-            self.resnet = nn.Sequential(*list(self.resnet.children())[:-3])
-            self.resnet.eval()
-            for p in self.resnet.parameters():
-                p.requires_grad = False
+                                     annotation_size=self.num_visual_features)
 
         self.tanh = nn.Tanh()
         self.category_embedding_dim = category_embedding_dim
@@ -61,6 +64,7 @@ class QGenBelief(nn.Module):
     def get_object_probs(self, dialogue, dialogue_lengths, object_categories,
                          object_bboxes, num_objects,
                          guesser_visual_features=None):
+        """Returns probabilites over set of objects given a dialogue"""
         object_probs = nn.functional.softmax(
             self.guesser(
                 dialogue=dialogue,
@@ -75,6 +79,10 @@ class QGenBelief(nn.Module):
 
     def get_object_emb(self, object_categories, object_bboxes,
                        guesser_visual_features=None):
+        """
+        Returns the object representation according to
+        self.object_embedding_setting
+        """
         if self.object_emebdding_setting == 'from-guesser':
             emb = self.guesser.cat(object_categories)
             if self.guesser.setting == 'baseline':
@@ -83,20 +91,41 @@ class QGenBelief(nn.Module):
             if not self.train_guesser_setting:
                 guesser_emb.detach_()
             object_emb = self.linear(self.relu(guesser_emb))
+
         elif self.object_emebdding_setting == 'from-mrcnn':
             return self.relu(self.linear(guesser_visual_features))
-        else:
+
+        elif self.object_emebdding_setting == 'learn-emb':
             object_emb = self.category_emb(object_categories)
+
+        elif self.object_emebdding_setting == 'learn-emb-spatial':
+            object_emb = self.category_emb(object_categories)
+            object_emb = self.object_representation_mlp(
+                torch.cat([object_emb, object_bboxes], dim=-1))
+        else:
+            raise ValueError()
 
         return object_emb
 
     def get_belief_state(self, object_categories, object_bboxes,
                          object_probs, guesser_visual_features=None):
+        """
+        Returns Belief State, that is an representation over objects
+        in the image, weighted by a probability distribution over the objects
+        """
         object_emb = self.get_object_emb(object_categories, object_bboxes,
                                          guesser_visual_features)
+
         belief_state = self.tanh(torch.bmm(object_probs, object_emb))
 
         return belief_state
+
+    def reshape_resnet_features(self, resnet_features, belief_state):
+        resnet_features = resnet_features.permute(0, 2, 3, 1)
+        resnet_features = resnet_features.view(-1, 1, 14*14, 1024)
+        resnet_features = resnet_features.repeat(1, belief_state.size(1), 1, 1)
+        resnet_features = resnet_features.view(-1, 14*14, 1024)
+        return resnet_features
 
     def forward(self, dialogue, dialogue_lengths, cumulative_dialogue,
                 cumulative_lengths, num_questions, question_lengths,
@@ -112,6 +141,7 @@ class QGenBelief(nn.Module):
                 .repeat(1, self.category_embedding_dim).float()
             additional_features = additional_features.unsqueeze(1)\
                 .repeat(1, dialogue.size(1), 1)
+
         elif self.object_probs_setting in ['guesser-probs',
                                            'guesser-all-categories']:
             batch_size = dialogue.size(0)
@@ -155,6 +185,7 @@ class QGenBelief(nn.Module):
                 num_objects_repeated = None
                 object_categories = object_categories.new_tensor(
                     range(max_obj)).unsqueeze(0).repeat(batch_size, 1)
+                guesser_visual_features_repeated = None
 
             # get object probabilities after each q/a in the dialogue
             object_probs = object_bboxes.new_zeros((pad_que, max_obj))
@@ -170,28 +201,38 @@ class QGenBelief(nn.Module):
                 torch.enable_grad()
             object_probs = object_probs.view(-1, max_que, max_obj)
 
+            # self.object_probs = object_probs
+            # self.object_probs = self.object_probs.cpu()
+            # sizes = self.object_probs.size()
+            # if sizes[2] < 20:
+            #     self.object_probs = torch.cat(
+            #         (self.object_probs,
+            #          torch.zeros(sizes[0], sizes[1], 20-sizes[2])), dim=2)
+            # if self.object_probs.size(1) < 13:
+            #     # pad up to 9
+            #     self.object_probs = torch.cat(
+            #         (self.object_probs,
+            #          torch.zeros(sizes[0], 13-sizes[1], 20)), dim=1)
+            # elif self.object_probs.size(1) > 13:
+            #     self.object_probs = self.object_probs[:, :13, :]
+
             belief_state = self.get_belief_state(object_categories,
                                                  object_bboxes, object_probs,
                                                  guesser_visual_features)
 
             if self.visual_representation == 'resnet-mlb':
-                with torch.no_grad():
-                    resnet_features = self.resnet(resnet_features)
-                resnet_features = resnet_features.detach()
+                resnet_features = self.reshape_resnet_features(
+                    resnet_features, belief_state)
                 attn_vis = self.attn(
-                    resnet_features.repeat(1, 1, 1, belief_state.size(1)).view(-1, 14*14, 1024),
-                    belief_state.view(-1, 512))
-                attn_vis = attn_vis.view(belief_state.size(0), belief_state.size(1), -1) # b x q x 1024
+                    resnet_features,
+                    belief_state.view(-1, self.category_embedding_dim))
+                attn_vis = attn_vis.view(batch_size, max_que, -1)
 
             # repeat belief_state over question tokens
             additional_features = dialogue.new_zeros(
                 batch_size, max_dln, self.category_embedding_dim).float()
             attn_vis_features = dialogue.new_zeros(
-                batch_size, max_dln, 1024).float()
-            chunked_dialogue = dialogue.new_zeros(
-                batch_size, max_que-1, max_que_len+1)  # +1 for answer
-            chunked_lengths = dialogue.new_zeros(
-                batch_size, max_que-1)
+                batch_size, max_dln, self.num_visual_features).float()
             for qi in range(max_que - 1):
 
                 running = qi < (num_questions - 1)
@@ -206,84 +247,27 @@ class QGenBelief(nn.Module):
                     additional_features[bi, fr:to] = belief_state[bi, qi]\
                         .unsqueeze(0).repeat(to - fr, 1)\
                         .view(-1, self.category_embedding_dim)
+
                     if self.visual_representation == 'resnet-mlb':
                         attn_vis_features[bi, fr:to] = attn_vis[bi, qi]\
                             .unsqueeze(0).repeat(to - fr, 1)\
-                            .view(-1, 1024)
+                            .view(-1, self.num_visual_features)
 
-                    if False:
-                        last_question = num_questions[bi]-1 == qi+1
-                        offset1, offset2, offset3 = 0, 1, 1
-                        if qi == 0:
-                            offset1 += 1  # +1 from <sos>
-                            offset2 -= 1
-                        if last_question:
-                            offset1 -= 1
-                            offset3 -= 1
+        if self.visual_representation == 'resnet-mlb':
+            visual_features = attn_vis_features
 
-                        chunked_dialogue[bi, qi, :to - fr + offset1] = \
-                            dialogue[bi, fr + offset2:to + offset3]
-
-                        chunked_lengths[bi, qi] = (to + offset3) - (fr + offset2)
-
-        if False:
-            # this part is still not working correctly...
-            batch_ids = torch.arange(0, batch_size).long()
-            logits = dialogue.new_zeros(
-                batch_size, max_que-1,
-                max_que_len+1, self.qgen.emb.num_embeddings).float()
-            hx = dialogue.new_zeros(
-                1, batch_size, self.qgen.hidden_size).float()
-            hx = (hx, hx)
-            for qi in range(max_que-1):
-                run = batch_ids[qi < (num_questions - 1)]
-                additional_features = belief_state[run, qi]\
-                    .unsqueeze(1).repeat(1, max_que_len+1, 1)
-
-                if self.visual_representation == 'resnet-mlb':
-                    context = hx[0][:, run].squeeze(0)
-                    visual_rep = self.attn(
-                        inputs=resnet_features.permute(0, 2, 3, 1)[run],
-                        context=context)
-                    visual_rep = self.tanh(self.attn_linear(visual_rep))
-                    visual_rep = visual_rep.unsqueeze(1).repeat(
-                        1, max_que_len+1, 1)
-                    additional_features = torch.cat(
-                        (additional_features, visual_rep), dim=-1)
-
-                vf = visual_features[run] if visual_features is not None \
-                    else None
-                logits[run, qi] = self.qgen(
-                    dialogue=chunked_dialogue[run, qi],
-                    dialogue_lengths=chunked_lengths[run, qi],
-                    visual_features=vf,
-                    additional_features=additional_features,
-                    hx=(hx[0][:, run], hx[1][:, run]),
-                    flatten_output=False,
-                    total_length=max_que_len+1)
-                hx[0][:, run] = self.qgen.last_hidden[0]
-                hx[1][:, run] = self.qgen.last_hidden[1]
-
-            m = chunked_dialogue.unsqueeze(-1) > 0
-
-            logits = logits.masked_select(m).view(
-                -1, self.qgen.emb.num_embeddings)
-        else:
-            if self.visual_representation == 'resnet-mlb':
-                visual_features = attn_vis_features
-
-            logits = self.qgen(
-                dialogue=dialogue,
-                dialogue_lengths=dialogue_lengths,
-                visual_features=visual_features,
-                additional_features=additional_features)
+        logits = self.qgen(
+            dialogue=dialogue,
+            dialogue_lengths=dialogue_lengths,
+            visual_features=visual_features,
+            additional_features=additional_features)
 
         return logits
 
     def inference(self, input, dialogue, dialogue_lengths, hidden,
                   visual_features, end_of_question_token, object_categories,
                   object_bboxes, num_objects, guesser_visual_features=None,
-                  max_tokens=100, strategy='greedy',
+                  max_tokens=100, strategy='greedy', resnet_features=None,
                   return_keys=['generations', 'log_probs', 'hidden_states',
                                'mask', 'object_probs']):
 
@@ -295,9 +279,22 @@ class QGenBelief(nn.Module):
         if not self.train_guesser_setting:
             object_probs = object_probs.detach()
 
+        if self.object_probs_setting == 'guesser-all-categories':
+            object_categories = object_categories.new_tensor(
+                range(81)).unsqueeze(0).repeat(input.size(0), 1)
+
         belief_state = self.get_belief_state(object_categories,
                                              object_bboxes, object_probs,
                                              guesser_visual_features)
+
+        if self.visual_representation == 'resnet-mlb':
+            resnet_features = self.reshape_resnet_features(
+                resnet_features, belief_state)
+            attn_vis = self.attn(
+                resnet_features,
+                belief_state.view(-1, self.category_embedding_dim))
+            attn_vis = attn_vis.view(belief_state.size(0), belief_state.size(1), -1)
+            visual_features = attn_vis
 
         lengths, h, c, return_dict = self.qgen.inference(
             input=input,
@@ -332,6 +329,8 @@ class QGenBelief(nn.Module):
             self.object_emebdding_setting
         belief_params['object_probs_setting'] = self.object_probs_setting
         belief_params['train_guesser_setting'] = self.train_guesser_setting
+        belief_params['visual_representation'] = self.visual_representation
+        belief_params['visual_query'] = self.visual_query
         params['belief'] = belief_params
 
         # save qgen hyperparameters
@@ -357,7 +356,7 @@ class QGenBelief(nn.Module):
 
         ts = datetime.datetime.now().timestamp()
         torch.save(params['qgen'], 'qgen_tmp_{}.pt'.format(ts))
-        qgen = QGen.load(device, file='qgen_tmp_{}.pt'.format(ts))
+        qgen = QGen.load(device, file='qgen_tmp_{}.pt'.format(ts), legacy_attn=True)
         os.remove('qgen_tmp_{}.pt'.format(ts))
 
         torch.save(params['guesser'], 'guesser_tmp_{}.pt'.format(ts))
@@ -376,12 +375,30 @@ class QGenBelief(nn.Module):
         if 'train_guesser_setting' not in params['belief']:
             params['belief']['train_guesser_setting'] = \
                 params['belief'].get('train_guesser', False)
+        if 'visual_representation' not in params['belief']:
+            params['belief']['visual_representation'] = 'vgg'
+        if 'visual_query' not in params['belief']:
+            params['belief']['visual_query'] = None
+
+        if params['belief']['visual_representation'] == 'vgg':
+            num_visual_features = 1000
+        elif params['belief']['visual_representation'] == 'resnet-mlb':
+            num_visual_features = 1024
 
         qgen_belief = cls(qgen, guesser,
                           params['belief']['category_embedding_dim'],
                           params['belief']['object_emebdding_setting'],
                           params['belief']['object_probs_setting'],
-                          params['belief']['train_guesser_setting'])
+                          params['belief']['train_guesser_setting'],
+                          params['belief']['visual_representation'],
+                          num_visual_features,
+                          params['belief']['visual_query'])
+        print(qgen_belief)
+
+        # for k in ['attn.ah.weight', 'attn.ch.weight', 'attn.score_linear.weight']:
+        #     if k in params['state_dict'].keys():
+        #         params['state_dict']['qgen.'+k] = params['state_dict'].pop(k)
+
 
         qgen_belief.load_state_dict(params['state_dict'])
         qgen_belief = qgen_belief.to(device)

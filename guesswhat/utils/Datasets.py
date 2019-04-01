@@ -23,15 +23,6 @@ class QuestionerDataset(Dataset):
 
         self.data = defaultdict(dict)
 
-        # features_file = os.path.join(data_dir, 'vgg_fc8.hdf5')
-        # mapping_file = os.path.join(data_dir, 'imagefile2id.json')
-        # for f in [features_file, mapping_file]:
-        #     if not os.path.exists(f):
-        #         raise FileNotFoundError("{} file not found." +
-        #                                 "Please create with " +
-        #                                 "utils/cache_visual_features.py"
-        #                                 .format(features_file))
-
         self.load_vgg_features = load_vgg_features
         if self.load_vgg_features:
             vgg_file = os.path.join(data_dir, 'vgg_fc8.hdf5')
@@ -41,29 +32,11 @@ class QuestionerDataset(Dataset):
 
         self.load_resnet_features = load_resnet_features
         if load_resnet_features:
-            # self.resnet_file = os.path.join(data_dir, 'resnet152_block3.hdf5')
-            # self.resnet_mapping = json.load(open(os.path.join(
-            #     data_dir, 'resnet_block3_imagefile2id.json')))[split]
-            # self.resnet_features = np.asarray(h5py.File(
-            #     self.resnet_file, 'r')[split]['resnet152_block3'])
-
-            # resnet_file = os.path.join(data_dir, 'resnet152_block3.hdf5')
-            # self.resnet_features = h5py.File(
-            #     resnet_file, 'r')[split]['resnet152_block3']
-            # self.resnet_mapping = json.load(open(os.path.join(
-            #     data_dir, 'resnet_block3_imagefile2id.json')))[split]
-            # self.resnet_features = h5py.File(
-            #     self.resnet_file, 'r')[split]['resnet152_block3']
-
-            self.train_coco = os.path.join('/home/timbmg/MSCOCO/images', 'train2014')
-            self.valid_coco = os.path.join('/home/timbmg/MSCOCO/images', 'val2014')
-
-            self.transform = transforms.Compose([
-                transforms.Resize(256),
-                transforms.CenterCrop(224),
-                transforms.ToTensor(),
-                transforms.Normalize((0.485, 0.456, 0.406),
-                                     (0.229, 0.224, 0.225))])
+            self.resnet_file = os.path.join(data_dir, 'resnet152_block3.hdf5')
+            self.resnet_mapping = json.load(open(os.path.join(
+                data_dir, 'resnet_block3_imagefile2id.json')))[split]
+            self.resnet_features = np.asarray(h5py.File(
+                self.resnet_file, 'r')[split]['resnet152_block3'])
 
         self.mrcnn_objects = mrcnn_objects
         if self.mrcnn_objects:
@@ -162,10 +135,11 @@ class QuestionerDataset(Dataset):
                     vgg_map_id = self.vgg_mapping[image]
                 # image_featuers = self.features[self.mapping[image]]
 
-                # if self.load_resnet_features:
-                #     resnet_map_id = self.resnet_mapping[image]
+                if self.load_resnet_features:
+                    resnet_map_id = self.resnet_mapping[image]
 
                 idx = len(self.data)
+                self.data[idx]['game_id'] = game['id']
                 self.data[idx]['source_dialogue'] = source_dialogue
                 self.data[idx]['target_dialogue'] = target_dialogue
                 self.data[idx]['dialogue_lengths'] = len(source_dialogue)
@@ -176,11 +150,10 @@ class QuestionerDataset(Dataset):
                 self.data[idx]['num_objects'] = len(object_categories)
                 self.data[idx]['image_url'] = game['image']['flickr_url']
                 self.data[idx]['image'] = image
-                # self.data[idx]['image_featuers'] = image_featuers
                 if self.load_vgg_features:
                     self.data[idx]['vgg_map_id'] = vgg_map_id
-                # if self.load_resnet_features:
-                #     self.data[idx]['resnet_map_id'] = resnet_map_id
+                if self.load_resnet_features:
+                    self.data[idx]['resnet_map_id'] = resnet_map_id
                 if cumulative_dialogue:
                     # num_questions +1 to include <sos>
                     self.data[idx]['num_questions'] = len(game['qas']) + 1
@@ -205,22 +178,9 @@ class QuestionerDataset(Dataset):
     def __getitem__(self, idx):
         r = self.data[idx]
         if self.load_resnet_features:
-            # resnet_features = self.resnet_features[
-            #     self.resnet_mapping[self.data[idx]['image']]]
-            # return {**self.data[idx], 'resnet_features': resnet_features}
-
-            # map_id = self.data[idx]['resnet_map_id']
-            # resnet_features = self.resnet_features[map_id]
-            # r = {**r, 'resnet_features': resnet_features}
-
-            # with h5py.File(self.resnet_file, 'r') as file:
-            #     resnet_features = file[self.split]['resnet152_block3'][map_id]
-            # resnet_features = np.ones((1024, 14, 14))
-            img_path = os.path.join(self.train_coco if 'train' in self.data[idx]['image']
-                                    else self.valid_coco, self.data[idx]['image'])
-            img = Image.open(img_path).convert('RGB')
-            proc_img = self.transform(img)
-            r = {**r, 'resnet_features': proc_img}
+            map_id = self.data[idx]['resnet_map_id']
+            resnet_features = self.resnet_features[map_id]
+            r = {**r, 'resnet_features': resnet_features}
 
         if self.load_vgg_features:
             map_id = self.data[idx]['vgg_map_id']
@@ -283,27 +243,26 @@ class QuestionerDataset(Dataset):
 
                     batch[key].append(padded)
 
-            for k in batch.keys():
-                if k in ['image', 'image_url']:
-                    pass
-                else:
-                    try:
-                        batch[k] = torch.Tensor(batch[k]).to(device)
-                    except:
-                        print(k)
-                        raise
-                    if k in ['source_dialogue', 'target_dialogue',
-                             'num_questions', 'cumulative_lengths',
-                             'dialogue_lengths', 'object_categories',
-                             'num_objects', 'target_id', 'target_category',
-                             'cumulative_dialogue', 'best_iou_val',
-                             'multi_target_mask', 'question_lengths']:
-                        batch[k] = batch[k].long()
+            # for k in batch.keys():
+            #     if k in ['image', 'image_url']:
+            #         pass
+            #     else:
+            #         try:
+            #             batch[k] = torch.Tensor(batch[k]).to(device)
+            #         except:
+            #             print(k)
+            #             raise
+            #         if k in ['source_dialogue', 'target_dialogue',
+            #                  'num_questions', 'cumulative_lengths',
+            #                  'dialogue_lengths', 'object_categories',
+            #                  'num_objects', 'target_id', 'target_category',
+            #                  'cumulative_dialogue', 'best_iou_val',
+            #                  'multi_target_mask', 'question_lengths']:
+            #             batch[k] = batch[k].long()
 
             return batch
 
         return collate_fn
-
 
     def collate_fn(data):
 
@@ -447,7 +406,7 @@ class OracleDataset(Dataset):
                         game['image']['file_name']
 
     def __len__(self):
-        return 100
+        #return 100
         return len(self.data)
 
     def __getitem__(self, idx):
@@ -542,8 +501,9 @@ class InferenceDataset(Dataset):  # TODO refactor
     # when sampling new objects, it is not checked weather mrcnn has
     # sufficient IOU!
 
-    def __init__(self, file, vocab, category_vocab, data_dir='data',
-                 new_object=False, mrcnn_objects=False, mrcnn_settings=None):
+    def __init__(self, split, file, vocab, category_vocab, data_dir='data',
+                 new_object=False, mrcnn_objects=False, mrcnn_settings=None,
+                 load_vgg_features=False, load_resnet_features=False):
         self.data = defaultdict(dict)
         self.new_object = new_object
         features_file = os.path.join(data_dir, 'vgg_fc8.hdf5')
@@ -554,8 +514,20 @@ class InferenceDataset(Dataset):  # TODO refactor
                                          "with utils/cache_visual_features.py")
                                         .format(f))
 
-        self.features = np.asarray(h5py.File(features_file, 'r')['vgg_fc8'])
-        self.mapping = json.load(open(mapping_file))
+        self.load_vgg_features = load_vgg_features
+        if self.load_vgg_features:
+            vgg_file = os.path.join(data_dir, 'vgg_fc8.hdf5')
+            self.vgg_features = np.asarray(h5py.File(vgg_file, 'r')['vgg_fc8'])
+            self.vgg_mapping = json.load(
+                open(os.path.join(data_dir, 'imagefile2id.json')))
+
+        self.load_resnet_features = load_resnet_features
+        if load_resnet_features:
+            self.resnet_file = os.path.join(data_dir, 'resnet152_block3.hdf5')
+            self.resnet_mapping = json.load(open(os.path.join(
+                data_dir, 'resnet_block3_imagefile2id.json')))[split]
+            self.resnet_features = np.asarray(h5py.File(
+                self.resnet_file, 'r')[split]['resnet152_block3'])
 
         self.mrcnn_objects = mrcnn_objects
         if self.mrcnn_objects:
@@ -622,7 +594,10 @@ class InferenceDataset(Dataset):  # TODO refactor
                             category_vocab[mrcnn_classes[c]]
 
                 image = game['image']['file_name']
-                image_featuers = self.features[self.mapping[image]]
+                if self.load_vgg_features:
+                    vgg_map_id = self.vgg_mapping[image]
+                if self.load_resnet_features:
+                    resnet_map_id = self.resnet_mapping[image]
 
                 idx = len(self.data)
                 self.data[idx]['game_id'] = game['id']
@@ -639,7 +614,10 @@ class InferenceDataset(Dataset):  # TODO refactor
                 self.data[idx]['image_width'] = game['image']['width']
                 self.data[idx]['image_height'] = game['image']['height']
                 self.data[idx]['image_url'] = game['image']['flickr_url']
-                self.data[idx]['image_featuers'] = image_featuers
+                if self.load_vgg_features:
+                    self.data[idx]['vgg_map_id'] = vgg_map_id
+                if self.load_resnet_features:
+                    self.data[idx]['resnet_map_id'] = resnet_map_id
                 if self.mrcnn_objects:
                     # save gt object data
                     self.data[idx]['gt_object_bboxes'] = \
@@ -661,29 +639,40 @@ class InferenceDataset(Dataset):  # TODO refactor
         return len(self.data)
 
     def __getitem__(self, idx):
-        if not self.new_object:
-            return self.data[idx]
-        else:
+
+        r = self.data[idx]
+
+        if self.load_vgg_features:
+            map_id = self.data[idx]['vgg_map_id']
+            vgg_features = self.vgg_features[map_id]
+            r = {**r, 'vgg_features': vgg_features}
+
+        if self.load_resnet_features:
+            map_id = self.data[idx]['resnet_map_id']
+            resnet_features = self.resnet_features[map_id]
+            r = {**r, 'resnet_features': resnet_features}
+
+        if self.new_object:
             # sample a new object at random from available objects as target
             new_object_id = np.random.randint(0, self.data[idx]['num_objects'])
             while new_object_id == self.data[idx]['target_id']:
                 new_object_id = \
                     np.random.randint(0, self.data[idx]['num_objects'])
 
-            return_data = dict()
-            for key in self.data[idx].keys():
-                if key == 'target_id':
-                    return_data[key] = new_object_id
-                elif key == 'target_category':
-                    return_data[key] = \
-                        self.data[idx]['object_categories'][new_object_id]
-                elif key == 'target_bbox':
-                    return_data[key] = \
-                        self.data[idx]['object_bboxes'][new_object_id]
-                else:
-                    return_data[key] = self.data[idx][key]
+            # for key in self.data[idx].keys():
+            #     if key == 'target_id':
+            #         r[key] = new_object_id
+            #     elif key == 'target_category':
+            #         r[key] = \
+            #             self.data[idx]['object_categories'][new_object_id]
+            #     elif key == 'target_bbox':
+            #         r[key] = \
+            #             self.data[idx]['object_bboxes'][new_object_id]
+            r['target_id'] = new_object_id
+            r['target_category'] = r['object_categories'][new_object_id]
+            r['target_bbox'] = r['object_bboxes'][new_object_id]
 
-            return return_data
+        return r
 
     @staticmethod
     def get_collate_fn(device):
@@ -733,7 +722,10 @@ class InferenceDataset(Dataset):  # TODO refactor
                     pass
                 else:
                     try:
-                        batch[k] = torch.Tensor(batch[k]).to(device)
+                        if not type(batch[k][0]) == torch.Tensor:
+                            batch[k] = torch.Tensor(batch[k]).to(device)
+                        else:
+                            batch[k] = torch.stack((batch[k]), dim=0).to(device)
                     except:
                         print(k)
                         raise

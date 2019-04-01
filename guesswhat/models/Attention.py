@@ -9,11 +9,11 @@ def mask_attn(scores, mask):
 
 class MLBAttention(nn.Module):
 
-    def __init__(self, hidden_size, context_size, input_size, glimpses=1):
+    def __init__(self, hidden_size, context_size, annotation_size, glimpses=1):
 
         super().__init__()
 
-        self.ih = nn.Linear(input_size, hidden_size, bias=False)
+        self.ah = nn.Linear(annotation_size, hidden_size, bias=False)
         self.ch = nn.Linear(context_size, hidden_size, bias=False)
         self.score_linear = nn.Linear(hidden_size, 1, bias=False)
         self.tanh = nn.Tanh()
@@ -22,26 +22,23 @@ class MLBAttention(nn.Module):
         if glimpses > 1:
             raise NotImplementedError()
 
-    def forward(self, inputs, context=None, mask=None):
+    def forward(self, annotations, context, mask=None):
         """
-        inputs:  [B, A, F] (A beeing the dimension to do the attention over)
+        annotations:  [B, A, F] (A beeing the dimension to do the attention over)
         context: [B, F]
         """
 
-        if context is None:
-            context = inputs.new_zeros(inputs.size(0), self.ch.in_features)
-
-        i = self.tanh(self.ih(inputs))
+        a = self.tanh(self.ah(annotations))
         c = self.tanh(self.ch(context)).unsqueeze(1)
 
-        scores = self.score_linear(i*c)
+        scores = self.score_linear(a*c)
 
         if mask is not None:
             scores = mask_attn(scores, mask)
 
         attn_weights = nn.functional.softmax(scores, dim=1)
 
-        return torch.bmm(attn_weights.transpose(1, 2), inputs).squeeze(1)
+        return torch.bmm(attn_weights.transpose(1, 2), annotations).squeeze(1)
 
 
 class DotAttention(nn.Module):

@@ -22,8 +22,8 @@ def main(args):
     logger.add_text('exp_name', args.exp_name)
     logger.add_text('args', str(args))
 
-    torch.manual_seed(args.seed)
     np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
 
@@ -38,8 +38,9 @@ def main(args):
     for split in splits:
         file = os.path.join(args.data_dir, 'guesswhat.' + split + '.jsonl.gz')
         data_loader[split] = DataLoader(
-            dataset=InferenceDataset(file, vocab, category_vocab,
-                                     new_object=split == 'train'),
+            dataset=InferenceDataset(split, file, vocab, category_vocab,
+                                     new_object=split == 'train',
+                                     load_vgg_features=True),
             batch_size=args.batch_size,
             collate_fn=InferenceDataset.get_collate_fn(device),
             shuffle=split == 'train')
@@ -72,6 +73,15 @@ def main(args):
 
         for split in splits:
 
+            if split == 'train':
+                qgen.train()
+                baseline.train()
+                torch.enable_grad()
+            else:
+                qgen.eval()
+                baseline.eval()
+                torch.no_grad()
+
             total_acc = list()
             for iteration, sample in enumerate(data_loader[split]):
 
@@ -79,7 +89,7 @@ def main(args):
                     sample, vocab, split2strat[split], args.max_num_questions,
                     device, args.belief_state,
                     return_keys=['mask', 'object_logits', 'hidden_states',
-                                 'log_probs'])
+                                 'log_probs', 'generations'])
 
                 mask = return_dict['mask']
                 object_logits = return_dict['object_logits']
@@ -96,6 +106,12 @@ def main(args):
                 rewards = rewards.unsqueeze(1).repeat(1, mask.size(1))
                 rewards *= mask
 
+
+                print("dialogue", return_dict['dialogue'][0], return_dict['dialogue'].size())
+                #print("log_probs", log_probs, log_probs.size())
+                #print("mask", mask, mask.size())
+                #print("rewards", rewards, rewards.size())
+
                 baseline_preds = baseline(hidden_states.detach_()).squeeze(2)
                 baseline_preds *= mask
                 baseline_loss = baseline_loss_fn(
@@ -106,7 +122,12 @@ def main(args):
                 baseline_preds = baseline_preds.detach()
                 policy_gradient_loss = torch.sum(
                     log_probs * (rewards - baseline_preds), dim=1)
+                print(policy_gradient_loss)
                 policy_gradient_loss = -torch.mean(policy_gradient_loss)
+                print()
+                raise
+                # policy_gradient_loss = - torch.sum(log_probs) / torch.sum(mask)
+                #print(policy_gradient_loss_old.item(), policy_gradient_loss.item())
 
                 if split == 'train':
                     qgen_optimizer.optimize(
@@ -158,12 +179,12 @@ if __name__ == "__main__":
     parser.add_argument('-d', '--data_dir', type=str, default='data')
 
     # Experiment Settings
-    parser.add_argument('-mq', '--max_num_questions', type=int, default=5)
+    parser.add_argument('-mq', '--max_num_questions', type=int, default=8)
     parser.add_argument('-mt', '--max_question_tokens', type=int, default=12)
     parser.add_argument('-tstg', '--train-strategy',
-                        choices=['greedy', 'sampling'], required=True)
+                        choices=['greedy', 'sampling'], default='sampling')
     parser.add_argument('-estg', '--eval-strategy',
-                        choices=['greedy', 'sampling'], required=True)
+                        choices=['greedy', 'sampling'], default='greedy')
     parser.add_argument('-b', '--batch_size', type=int, default=64)
     parser.add_argument('-test', '--test_set', action='store_true')
 

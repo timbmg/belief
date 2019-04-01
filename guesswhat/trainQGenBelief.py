@@ -63,18 +63,23 @@ def main(args):
             collate_fn=QuestionerDataset.collate_fn,
             num_workers=args.num_workers)
 
+
     guesser = Guesser.load(device, file=args.guesser_file)
     if not args.train_guesser_setting:
         for p in guesser.parameters():
             p.requires_grad = False
+
+    num_additional_features = 0 if args.no_belief_state_input \
+        else args.category_embedding_dim
     qgen = QGen(len(vocab), args.word_embedding_dim, args.num_visual_features,
                 args.visual_embedding_dim, args.hidden_size,
-                args.category_embedding_dim).to(device)
+                num_additional_features).to(device)
+
     model = QGenBelief(qgen, guesser, args.category_embedding_dim,
                        args.object_embedding_setting,
                        args.object_probs_setting,
                        args.train_guesser_setting, args.visual_representation,
-                       args.visual_query).to(device)
+                       args.num_visual_features, args.visual_query).to(device)
 
     print(model)
     logger.add_text('model', str(model))
@@ -108,21 +113,14 @@ def main(args):
 
     best_val_loss = 1e9
 
-
-    if False:
-        manipulate_targets = (lambda x: x.masked_select(x > 0)) if args.visual_representation=='resnet-mlb' else None
-    else:
-        manipulate_targets = None
-
     for epoch in range(args.epochs):
         train_loss, train_acc = eval_epoch(
             model, data_loader['train'], forward_kwargs_mapping,
-            target_kwarg, loss_fn, optimizer,
-            manipulate_targets=manipulate_targets)
+            target_kwarg, loss_fn, optimizer)
 
         valid_loss, valid_acc = eval_epoch(
             model, data_loader['valid'], forward_kwargs_mapping, target_kwarg,
-            loss_fn, manipulate_targets=manipulate_targets)
+            loss_fn)
 
         if valid_loss < best_val_loss:
             best_val_loss = valid_loss
@@ -166,12 +164,14 @@ if __name__ == "__main__":
 
     # Settings
     parser.add_argument('-oe', '--object-embedding-setting',
-                        choices=['learn-emb', 'from-guesser', 'from-mrcnn'],
-                        default='learn-emb',
+                        choices=['learn-emb', 'from-guesser', 'from-mrcnn',
+                                 'learn-emb-spatial'], default='learn-emb',
                         help='Determines, which object embeddings to use. '
                         + 'Either a new embedding matrix is learned '
                         + 'end-2-end, or the object embedding (including the '
                         + 'bbox information) form the guesser is used.')
+    parser.add_argument('--no-belief-state-input', action='store_true',
+                        help='Belief State will not be appended to QGen input')
     parser.add_argument('-op', '--object-probs-setting',
                         choices=['guesser-probs', 'uniform',
                                  'guesser-all-categories'],

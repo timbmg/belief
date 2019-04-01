@@ -58,14 +58,15 @@ class ImageDataset(Dataset):
 
 def main(args):
 
-    resnet = torchvision.models.resnet152(pretrained=True)
+    resnet = torchvision.models.resnet152(pretrained=True).to(device)
     resnet = torch.nn.Sequential(*list(resnet.children())[:-3])
-    resnet.to(device)
     resnet.eval()
     torch.no_grad()
 
     if torch.cuda.is_available() and torch.cuda.device_count() > 1:
         resnet = torch.nn.DataParallel(resnet)
+
+    print(resnet)
 
     h5_file = h5py.File(os.path.join(
         args.data_dir, "resnet152_block3.hdf5"), "w")

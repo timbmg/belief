@@ -15,7 +15,6 @@ bash guesswhat/data/download.sh
 ```
 Alternatively, you can create the VGG16 FC8 yourself with
 ```bash
-cd guesswhat
 python3 utils/cache_vgg_features.py
 ```
 For the Vocabulary and Category Vocabulary, if the files are not found in the specified folder for the training scripts, they will be created.
@@ -26,7 +25,7 @@ For the Vocabulary and Category Vocabulary, if the files are not found in the sp
 ```
 
 ## Baseline Models
-First, the baseline models of the Oracle, Guesser and Question Generator have to be trained. The default command line argumnets are those of the orginal paper.
+First, the baseline models of the Oracle, Guesser and Question Generator have to be trained. The default command line arguments are those of the original paper.
 - Oracle
 ```bash
 python3 trainOracle.py

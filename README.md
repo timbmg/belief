@@ -16,7 +16,7 @@ cd guesswhat
 ```
 - Download the dataset, preprocessed VGG16 FC8 features and vocabulary files.
 ```bash
-bash guesswhat/data/download.sh
+bash data/download.sh
 ```
 Alternatively, you can create the VGG16 FC8 yourself with
 ```bash

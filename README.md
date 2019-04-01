@@ -79,6 +79,13 @@ If the model is a belief model, the `-belief` option has to be passed addionally
 ```bash
 python3 inference.py -bin/$qgenfile.pt
 ```
-
-### Analysis
+## Analysis
+### Stats and Graphs
 All analysis can be reproduced from the [analysis jupyter notebook](guesswhat/analysis/analysis.ipynb). The log files are created by passing the `-save` option to the inference script or can be downloaded as mentioned in the Preparations section.
+### Web Tool
+In order to run the web tool for comparing dialogues download the http-server from npm [here](https://www.npmjs.com/package/http-server).
+If the log files are not in the analysis directory, move them there. Then change to analysis directory and start the http-server.
+```bash
+cd analysis
+http-server
+```

@@ -1,6 +1,11 @@
 # Belief State for Visually Grounded, Task-Oriented Neural Dialogue Model
 
 ## Preparations
+### Requirements
+This code as been developed with python 3.6.5.
+Requirements can be found in the [requirements.txt](requirements.txt).
+
+### Downloads
 - Clone this repository and change.
 ```bash
 git clone git@github.com:timbmg/believe.git
@@ -73,3 +78,6 @@ If the model is a belief model, the `-belief` option has to be passed addionally
 ```bash
 python3 inference.py -bin/$qgenfile.pt
 ```
+
+### Analysis
+All analysis can be reproduced from the [analysis jupyter notebook](guesswhat/analysis/analysis.ipynb). The log files are created by passing the `-save` option to the inference script or can be downloaded as mentioned in the Preparations section.

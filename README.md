@@ -1,7 +1,7 @@
 # Belief State for Visually Grounded, Task-Oriented Neural Dialogue Model
 This repository provides the code and [pdf](belief_thesis.pdf) for my Master Thesis at University of Amsterdam on "Belief State for Visually Grounded, Task-Oriented Neural Dialogue Model".
 ## Preparations
-This code as been developed with python 3.6.5.
+This code has been developed with python 3.6.5.
 Requirements can be found in the [requirements.txt](requirements.txt).
 
 ### Downloads
@@ -47,7 +47,7 @@ python3 trainQGen.py
 
 ## Belief Models
 ### Training
-The different belief models can be trained with the following commands. Note that these are the settings that achieved the best results on the validation set. For all other hyperparameters we refer to the help text in the training file.
+The different belief models can be trained with the following commands. Note that these are the settings that achieved the best results on the validation set. For all other hyperparameters, we refer to the help text in the training file.
 - Belief
 ```bash
 python3 trainQGenBelief.py \
@@ -79,7 +79,7 @@ python3 trainQGenBelief.py \
 
 ### Evaluation
 All Question Generator models can be evaluated with the inference script.
-If the model is a belief model, the `-belief` option has to be passed addionally. In case the model shall be evaluated on the test set, please pass the `-split test` option. Further, in order to save the outputs (i.e. generated dialogues, belief and guesser probabilities), please pass `-save`. For all other options we refer to the script.
+If the model is a belief model, the `-belief` option has to be passed additionally. In case the model shall be evaluated on the test set, please pass the `-split test` option. Further, in order to save the outputs (i.e. generated dialogues, belief and guesser probabilities), please pass `-save`. For all other options, we refer to the script.
 ```bash
 python3 inference.py -bin/$qgenfile.pt
 ```
@@ -88,7 +88,7 @@ python3 inference.py -bin/$qgenfile.pt
 All analysis can be reproduced from the [analysis jupyter notebook](guesswhat/analysis/analysis.ipynb). The log files are created by passing the `-save` option to the inference script or can be downloaded as mentioned in the Preparations section.
 ### Web Tool
 In order to run the web tool for comparing dialogues download the http-server from npm [here](https://www.npmjs.com/package/http-server).
-If the log files are not in the analysis directory, move them there. Then change to analysis directory and start the http-server.
+If the log files are not in the analysis directory, move them there. Then change to the analysis directory and start the http-server.
 ```bash
 cd analysis
 http-server

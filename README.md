@@ -1,7 +1,6 @@
 # Belief State for Visually Grounded, Task-Oriented Neural Dialogue Model
-
+This repository provides the code and [pdf](belief_thesis.pdf) for my Master Thesis at University of Amsterdam on "Belief State for Visually Grounded, Task-Oriented Neural Dialogue Model".
 ## Preparations
-### Requirements
 This code as been developed with python 3.6.5.
 Requirements can be found in the [requirements.txt](requirements.txt).
 
@@ -23,7 +22,7 @@ Alternatively, you can create the VGG16 FC8 yourself with
 python3 utils/cache_vgg_features.py
 ```
 Note that you need the training and validation set of MS COCO 2014.  
-For the Vocabulary and Category Vocabulary, if the files are not found in the specified folder for the training scripts, they will be created.
+For the Vocabulary and Category Vocabulary, if the files are not found in the specified folder for the training scripts, they will be created. Note that for the pretrained models, the provided Vocabulary and Category files need to be used.
 
 - Download the bin and log files of the pretrained models.
 ```bash
@@ -32,7 +31,7 @@ bash analysis/download.sh
 ```
 
 ## Baseline Models
-First, the baseline models of the Oracle, Guesser and Question Generator have to be trained. The default command line arguments are those of the original paper.
+First, the baseline models of the Oracle, Guesser and optionally Question Generator have to be trained. The default command line arguments are those of the original paper. The models can be trained with the following commands:
 - Oracle
 ```bash
 python3 trainOracle.py
@@ -48,7 +47,7 @@ python3 trainQGen.py
 
 ## Belief Models
 ### Training
-The different belief models can be trained with the following commands. Note that these are the settings that achieved the best results on the validation set. For all other hyperparameters we refer to the help text in the file.
+The different belief models can be trained with the following commands. Note that these are the settings that achieved the best results on the validation set. For all other hyperparameters we refer to the help text in the training file.
 - Belief
 ```bash
 python3 trainQGenBelief.py \

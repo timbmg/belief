@@ -1,5 +1,5 @@
 # Belief State for Visually Grounded, Task-Oriented Neural Dialogue Model
-This repository provides the code and [pdf](belief_thesis.pdf) for my Master Thesis at University of Amsterdam on "Belief State for Visually Grounded, Task-Oriented Neural Dialogue Model".
+This repository provides the code, [thesis](thesis.pdf) and [slides](slides.pdf) for my Master Thesis at University of Amsterdam on "Belief State for Visually Grounded, Task-Oriented Neural Dialogue Model".
 ## Preparations
 This code has been developed with python 3.6.5.
 Requirements can be found in the [requirements.txt](requirements.txt).

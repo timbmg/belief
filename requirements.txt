@@ -3,6 +3,6 @@ nltk==3.4.5
 torch==0.4.1
 torchvision==0.2.1
 h5py==2.8.0
-numpy==1.15.4
+numpy==1.22.0
 Pillow>=7.1.0
 tensorboardX==1.6
